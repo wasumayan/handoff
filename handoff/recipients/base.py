@@ -23,6 +23,7 @@ class Profile:
     drop: list[str] = field(default_factory=list)
     notes: str = ""
     install_header: str = ""
+    native_docs: list[str] = field(default_factory=list)  # files the recipient reads on its own
 
 
 def load_profile(name: str) -> Profile:
@@ -53,13 +54,20 @@ class Recipient:
 
     def render(self, bundle: Bundle, composed: Composed | None) -> dict[str, str]:
         """Return {filename: content}; must include HANDOFF.md."""
+        self._last = (bundle, composed)
         return render_layers(bundle, composed, self.profile)
 
     def install_path(self, cwd: str) -> Path:
         return Path(cwd) / self.profile.instruction_file
 
     def install_block(self, files: dict[str, str]) -> str:
-        return files["HANDOFF.md"]
+        """What goes into the instruction file. Files the recipient reads natively (its own
+        CLAUDE.md / AGENTS.md) are elided to a reference so they are not duplicated into themselves."""
+        last = getattr(self, "_last", None)
+        if last is None or not self.profile.native_docs:
+            return files["HANDOFF.md"]
+        bundle, composed = last
+        return render_layers(bundle, composed, self.profile, elide=self.profile.native_docs)["HANDOFF.md"]
 
     def install(self, cwd: str, files: dict[str, str]) -> Path:
         path = self.install_path(cwd)

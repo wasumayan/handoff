@@ -14,4 +14,5 @@ drop = [
   "raw command transcripts beyond the last failing one",
 ]
 notes = "Claude Code reads CLAUDE.md from cwd and parents and ~/.claude/CLAUDE.md. A project memory directory may also exist. Do not duplicate content that already lives in CLAUDE.md; reference it."
+native_docs = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", ".claude/rules/"]
 install_header = "# CLAUDE.md"

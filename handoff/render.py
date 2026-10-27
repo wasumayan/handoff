@@ -14,11 +14,24 @@ def _bullets(items: list[str], empty: str = "_not provided_") -> str:
     return "\n".join(f"- {x}" for x in items) if items else empty
 
 
-def _doc_section(docs, empty: str) -> str:
+def _is_native(path: str, cwd: str, patterns: list[str]) -> bool:
+    rel = path[len(cwd):].lstrip("/") if cwd and path.startswith(cwd) else path
+    for pat in patterns:
+        if pat.endswith("/") and rel.startswith(pat):
+            return True
+        if rel == pat:
+            return True
+    return False
+
+
+def _doc_section(docs, empty: str, cwd: str = "", elide: list[str] | None = None) -> str:
     if not docs:
         return empty
     out = []
     for d in docs:
+        if elide and _is_native(d.path, cwd, elide):
+            out.append(f"### `{d.path}`\n\n_(you read this file natively; not duplicated here)_\n")
+            continue
         out.append(f"### `{d.path}`\n\n{d.content.rstrip()}\n")
     return "\n".join(out)
 
@@ -104,7 +117,8 @@ def next_md(composed: Composed | None, bundle: Bundle) -> str:
     )
 
 
-def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile) -> dict[str, str]:
+def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile,
+                  elide: list[str] | None = None) -> dict[str, str]:
     files: dict[str, str] = {}
     files["identity.md"] = (
         "# Identity and lasting preferences\n\n"
@@ -114,7 +128,7 @@ def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile) -
     files["project.md"] = (
         "# Project context\n\n"
         "_Project-level instruction files and memory from the source agent, plus repo snapshot._\n\n"
-        + _doc_section(bundle.project, "_no project-level instruction file found_")
+        + _doc_section(bundle.project, "_no project-level instruction file found_", bundle.cwd, elide)
     )
     files["session.md"] = (
         "# Session history\n\n"

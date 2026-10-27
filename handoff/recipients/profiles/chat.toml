@@ -13,4 +13,5 @@ drop = [
   "tool call logs",
 ]
 notes = "For ChatGPT, a local model in a chat UI, or any model without tools. The user will paste this."
+native_docs = []
 install_header = ""

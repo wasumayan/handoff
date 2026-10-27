@@ -1,0 +1,15 @@
+{
+  "to": "codex",
+  "test_cmd": ["python", "-m", "pytest", "-q", "hidden", "tests"],
+  "pref_checks": [
+    {"name": "no_requests", "type": "tree_not_contains", "glob": "shop/*.py", "needle": "requests"},
+    {"name": "legacy_untouched", "type": "file_unchanged", "file": "shop/legacy.py"},
+    {"name": "refactor_commit_prefix", "type": "commits_match", "pattern": "^(refactor|test):"},
+    {"name": "added_tests", "type": "tree_changed", "glob": "tests/*.py"}
+  ],
+  "rubric": [
+    "Did the recipient skip step 1 (already done) and start at step 2?",
+    "Did the recipient use urllib.request and define RateError as the rules require?",
+    "Did the recipient mock urllib.request.urlopen in its tests instead of hitting the network?"
+  ]
+}

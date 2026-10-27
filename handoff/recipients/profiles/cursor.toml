@@ -13,4 +13,5 @@ drop = [
   "tool call logs",
 ]
 notes = "Cursor applies .cursor/rules/*.mdc with alwaysApply: true to every chat. Long rules cost context on every message, so this profile's budget is small."
+native_docs = [".cursorrules", ".cursor/rules/"]
 install_header = ""

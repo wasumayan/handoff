@@ -54,12 +54,22 @@ class Backend:
 
     def chat(self, messages: list[dict], *, json_mode: bool = True, temperature: float = 0.2,
              max_tokens: int = 4000) -> str:
+        msg = self.complete(messages, json_mode=json_mode, temperature=temperature,
+                            max_tokens=max_tokens)
+        return msg.get("content") or ""
+
+    def complete(self, messages: list[dict], *, tools: list[dict] | None = None,
+                 json_mode: bool = False, temperature: float = 0.2,
+                 max_tokens: int = 4000) -> dict:
+        """One chat completion; returns the assistant message dict (content, tool_calls, ...)."""
         body: dict = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if tools:
+            body["tools"] = tools
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         data = json.dumps(body).encode()
@@ -74,12 +84,18 @@ class Backend:
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:500]
             if json_mode and e.code == 400 and "response_format" in detail:
-                return self.chat(messages, json_mode=False, temperature=temperature,
-                                 max_tokens=max_tokens)
+                return self.complete(messages, tools=tools, json_mode=False,
+                                     temperature=temperature, max_tokens=max_tokens)
             raise BackendError(f"{self.host} returned HTTP {e.code}: {detail}") from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise BackendError(f"could not reach {self.host}: {e}") from e
         try:
-            return payload["choices"][0]["message"]["content"] or ""
+            msg = payload["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as e:
             raise BackendError(f"unexpected response shape from {self.host}: {str(payload)[:300]}") from e
+        if not isinstance(msg, dict):
+            raise BackendError(f"unexpected message shape from {self.host}")
+        usage = payload.get("usage") or {}
+        msg["_usage"] = {"prompt_tokens": usage.get("prompt_tokens", 0),
+                         "completion_tokens": usage.get("completion_tokens", 0)}
+        return msg

@@ -15,4 +15,5 @@ drop = [
   "reasoning that led to an abandoned approach, unless the abandonment itself is a decision to record",
 ]
 notes = "Codex reads AGENTS.md from the repo root (and parent directories) at session start. It does not read CLAUDE.md. Keep the installed block short; link to .handoff/ files for detail."
+native_docs = ["AGENTS.md"]
 install_header = "# AGENTS.md"
