@@ -1,0 +1,16 @@
+name = "chat"
+display = "Plain chat model"
+instruction_file = ".handoff/PASTE_ME.md"
+context_budget = 20000
+style = "Self-contained prompt. Assume the reader has no filesystem access: inline the relevant file excerpts and commands. Begin with one paragraph of situation, end with the specific question or task."
+emphasize = [
+  "enough code excerpts to reason without the repo",
+  "the exact question or next task",
+  "constraints and preferences",
+]
+drop = [
+  "file paths without content",
+  "tool call logs",
+]
+notes = "For ChatGPT, a local model in a chat UI, or any model without tools. The user will paste this."
+install_header = ""

@@ -1,0 +1,18 @@
+name = "codex"
+display = "Codex CLI"
+instruction_file = "AGENTS.md"
+context_budget = 24000
+style = "Terse, imperative, concrete. Absolute or repo-relative file paths. Exact shell commands. State the test command explicitly. No narrative about the previous conversation."
+emphasize = [
+  "repository layout and where the relevant code lives",
+  "how to build, run and test, as exact commands",
+  "what is half-done: which files are mid-edit and what the intended end state is",
+  "constraints the user stated (forbidden dependencies, style rules, commit conventions)",
+]
+drop = [
+  "conversational back-and-forth and pleasantries",
+  "Claude-specific tool names (Read, Edit, Bash) - describe the action, not the tool",
+  "reasoning that led to an abandoned approach, unless the abandonment itself is a decision to record",
+]
+notes = "Codex reads AGENTS.md from the repo root (and parent directories) at session start. It does not read CLAUDE.md. Keep the installed block short; link to .handoff/ files for detail."
+install_header = "# AGENTS.md"

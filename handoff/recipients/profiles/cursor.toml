@@ -1,0 +1,16 @@
+name = "cursor"
+display = "Cursor"
+instruction_file = ".cursor/rules/handoff.mdc"
+context_budget = 16000
+style = "Short rule-like statements. File-oriented: name files and symbols. Keep under a few hundred lines; Cursor rules are injected into every request."
+emphasize = [
+  "which files are in play and what each is for",
+  "coding conventions in force",
+  "what to do next, as a checklist",
+]
+drop = [
+  "session narrative",
+  "tool call logs",
+]
+notes = "Cursor applies .cursor/rules/*.mdc with alwaysApply: true to every chat. Long rules cost context on every message, so this profile's budget is small."
+install_header = ""

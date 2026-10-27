@@ -1,0 +1,17 @@
+name = "claude_code"
+display = "Claude Code"
+instruction_file = "CLAUDE.md"
+context_budget = 32000
+style = "Direct, structured markdown. Short sections with headers. Explicit about what is verified versus assumed. Includes the user's stated preferences verbatim where they exist."
+emphasize = [
+  "current state of the work and what was last verified (tests run, commands that succeeded)",
+  "decisions already made and why, so they are not relitigated",
+  "the user's preferences and tone requirements",
+  "next steps in order",
+]
+drop = [
+  "Codex-specific tool names (apply_patch, shell) - describe the action",
+  "raw command transcripts beyond the last failing one",
+]
+notes = "Claude Code reads CLAUDE.md from cwd and parents and ~/.claude/CLAUDE.md. A project memory directory may also exist. Do not duplicate content that already lives in CLAUDE.md; reference it."
+install_header = "# CLAUDE.md"
