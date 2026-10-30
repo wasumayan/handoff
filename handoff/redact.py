@@ -43,7 +43,9 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 # Secrets inside a larger string: keep the surrounding text so the reader can follow it.
 CONTEXT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("url_password", re.compile(r"(://[^\s/:@]*:)[^\s/@]+(@)")),  # scheme://user:PASS@host
+    # scheme://user:PASS@host; the password runs to the last "@" before the host, so an unencoded
+    # "@", "/" or ":" inside it does not end the match early.
+    ("url_password", re.compile(r"(://[^\s/:@]*:)\S*(@)(?=[^\s@/]*(?:[/\s?#]|$))")),
     ("basic_auth", re.compile(r"(?i)(\bauthorization:\s*basic\s+)[A-Za-z0-9+/=]{8,}()")),
     ("cookie", re.compile(r"(?i)(\b(?:set-)?cookie:\s*)[^\r\n'\"]+()")),
 ]

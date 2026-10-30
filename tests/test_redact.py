@@ -158,3 +158,11 @@ def test_bundle_paths_notes_and_delta_are_scrubbed(monkeypatch, tmp_path):
     assert b.cwd == "~/proj" and b.project[0].path == "~/proj/AGENTS.md"
     assert "ops@corp" not in b.project[0].content and b.notes == ["read ~/proj/x"]
     assert "sk-proj" not in b.delta.commits[0] and str(home) not in b.delta.status
+
+
+def test_url_password_with_reserved_characters():
+    for url, pw in [("postgres://app:p@ss/w:rd9@db.example.com:5432/x", "p@ss/w:rd9"),
+                    ("mongodb://u:a@b@c@cluster0.example.net/?retryWrites=true", "a@b@c"),
+                    ("redis://:plain99@cache:6379", "plain99")]:
+        out, n = redact(url)
+        assert n == 1 and pw not in out and "[REDACTED:url_password]@" in out, url
