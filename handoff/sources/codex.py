@@ -205,6 +205,8 @@ class CodexSource(Source):
         return out
 
     def _session_cwd(self, path: Path) -> str:
+        """The session's cwd, or "" for a sub-agent thread: those carry the parent's cwd but are
+        not the user's sessions (cf. isSidechain in Claude Code)."""
         try:
             with path.open(errors="replace") as fh:
                 for _ in range(CWD_PROBE_LINES):
@@ -218,6 +220,11 @@ class CodexSource(Source):
                     if not isinstance(rec, dict):
                         continue
                     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+                    src = payload.get("source")
+                    if payload.get("thread_source") == "subagent" or (
+                        isinstance(src, dict) and "subagent" in src
+                    ):
+                        return ""
                     for holder in (payload, rec):
                         if isinstance(holder.get("cwd"), str):
                             return holder["cwd"]

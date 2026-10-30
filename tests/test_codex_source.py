@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -77,3 +78,17 @@ def test_v0144_exec_command_and_apply_patch():
     assert not grep.is_error  # "error" in the output of a successful command
     assert patch.name == "apply_patch" and patch.input_summary == "apply_patch docs/CHANGELOG.md"
     assert not patch.is_error and patch.result_summary.startswith("Success.")
+
+
+def test_subagent_threads_are_not_sessions(tmp_path):
+    """0.14x writes each spawned sub-agent (and guardian reviewer) as its own rollout with the
+    parent's cwd; often a large share on a real machine. They are not the user's sessions."""
+    day = tmp_path / "sessions" / "2026" / "08" / "10"
+    day.mkdir(parents=True)
+    shutil.copy(SESSIONS / "v0146.jsonl", day / "rollout-a.jsonl")
+    shutil.copy(SESSIONS / "subagent.jsonl", day / "rollout-b.jsonl")
+    (tmp_path / "proj").mkdir()
+    for p in day.iterdir():
+        p.write_text(p.read_text().replace("/tmp/demo-proj", str(tmp_path / "proj")))
+    paths = CodexSource(tmp_path).session_paths(str(tmp_path / "proj"))
+    assert [p.name for p in paths] == ["rollout-a.jsonl"]
