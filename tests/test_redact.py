@@ -163,7 +163,8 @@ def test_bundle_paths_notes_and_delta_are_scrubbed(monkeypatch, tmp_path):
 def test_url_password_with_reserved_characters():
     for url, pw in [("postgres://app:p@ss/w:rd9@db.example.com:5432/x", "p@ss/w:rd9"),
                     ("mongodb://u:a@b@c@cluster0.example.net/?retryWrites=true", "a@b@c"),
-                    ("redis://:plain99@cache:6379", "plain99")]:
+                    ("redis://:plain99@cache:6379", "plain99"),
+                    ("https://u:" + "L0ng" * 100 + "@host/x", "L0ng" * 100)]:
         out, n = redact(url)
         assert n == 1 and pw not in out and "[REDACTED:url_password]@" in out, url
 

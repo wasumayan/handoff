@@ -43,13 +43,34 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 # Secrets inside a larger string: keep the surrounding text so the reader can follow it.
 CONTEXT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # scheme://user:PASS@host; the password runs to the last "@" before the host, so an unencoded
-    # "@", "/" or ":" inside it does not end the match early.
-    # Spans are bounded so a long token full of "://x:" stays linear.
-    ("url_password", re.compile(r"(://[^\s/:@]{0,256}:)\S{1,256}(@)(?=[^\s@/]{0,256}(?:[/\s?#]|$))")),
     ("basic_auth", re.compile(r"(?i)(\bauthorization:\s*basic\s+)[A-Za-z0-9+/=]{8,}()")),
     ("cookie", re.compile(r"(?i)(\b(?:set-)?cookie:\s*)[^\r\n'\"]+()")),
 ]
+# scheme://user:PASS@host. Scanned in code rather than by a regex: the password runs to the last "@"
+# in its whitespace-delimited token, with no length cap (a cap fails open on long passwords), and
+# each token is visited once, so the scan is linear. A later "@" in a query string makes it
+# over-redact, which is the safe direction.
+URL_USER = re.compile(r"://[^\s/:@]*:")
+WHITESPACE = re.compile(r"\s")
+
+
+def _redact_url_passwords(text: str) -> tuple[str, int]:
+    out, pos, n = [], 0, 0
+    while (m := URL_USER.search(text, pos)) is not None:
+        ws = WHITESPACE.search(text, m.end())
+        end = ws.start() if ws else len(text)
+        at = text.rfind("@", m.end(), end)
+        if at > m.end():
+            out.append(text[pos:m.end()] + "[REDACTED:url_password]")
+            pos = at
+            n += 1
+        else:
+            out.append(text[pos:end])
+            pos = end
+    out.append(text[pos:])
+    return "".join(out), n
+
+
 # Personal data, on unless pii=False (`handoff create --keep-pii`). Phone numbers: North American
 # shapes with separators only, so ids, ports, dates and versions are left alone.
 # Not after "/": Hydra overrides like `env/maze_small@env.train` are config, not addresses.
@@ -110,6 +131,8 @@ def redact(text: str, pii: bool = True) -> tuple[str, int]:
     for tag, pat in PATTERNS:
         text, n = pat.subn(f"[REDACTED:{tag}]", text)
         count += n
+    text, n = _redact_url_passwords(text)
+    count += n
     for tag, pat in CONTEXT_PATTERNS:
         text, n = pat.subn(rf"\1[REDACTED:{tag}]\2", text)
         count += n
