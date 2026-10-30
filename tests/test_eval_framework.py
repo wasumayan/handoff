@@ -16,7 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "eval"))
 
 from harness import report  # noqa: E402
-from harness.agents import AgentRun, FakeAgent, merge, parse_claude_stream, parse_codex_events  # noqa: E402
+from harness.agents import (  # noqa: E402
+    AgentRun,
+    FakeAgent,
+    codex_peak_context,
+    merge,
+    parse_claude_stream,
+    parse_codex_events,
+)
 from harness.runner import Result, load_results, recall_only, run_cell  # noqa: E402
 from harness.scenario import SCENARIOS, load_scenarios, prepare  # noqa: E402
 from harness.variants import Variant, build, load_variants  # noqa: E402
@@ -213,8 +220,14 @@ def test_parse_codex_events_fixture():
     r = parse_codex_events((AGENT_FIXTURES / "codex_exec.jsonl").read_text())
     assert r.session_id.startswith("0190aaaa") and r.turns == 1 and r.tool_calls == 2
     assert r.input_tokens == 22888 - 11330 and r.cache_read_tokens == 11330 and r.output_tokens == 197
-    assert r.peak_context_tokens is None and r.cost_usd is None  # not observable from codex exec
+    assert r.peak_context_tokens is None and r.cost_usd is None  # exec --json alone: per turn only
     assert r.final_message == "hello from the probe" and r.commands[1].endswith("ls")
+
+
+def test_codex_peak_context_from_rollout():
+    text = (AGENT_FIXTURES / "codex_rollout_token_counts.jsonl").read_text()
+    assert codex_peak_context(text) == 15088  # largest last_token_usage.input_tokens
+    assert codex_peak_context("") is None
 
 
 def test_question_at_the_end_counts():

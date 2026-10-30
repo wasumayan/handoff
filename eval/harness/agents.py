@@ -134,9 +134,26 @@ def parse_claude_stream(text: str) -> AgentRun:
     return run
 
 
+def codex_peak_context(rollout_text: str) -> int | None:
+    """Largest single model call's input, from the `token_count` events Codex writes to its rollout
+    file (`exec --json` itself reports usage per turn only). last_token_usage.input_tokens includes
+    the cached part."""
+    peak = None
+    for line in rollout_text.splitlines():
+        try:
+            p = json.loads(line).get("payload") or {}
+        except json.JSONDecodeError:
+            continue
+        if p.get("type") == "token_count":
+            n = ((p.get("info") or {}).get("last_token_usage") or {}).get("input_tokens")
+            if isinstance(n, int):
+                peak = n if peak is None else max(peak, n)
+    return peak
+
+
 def parse_codex_events(text: str) -> AgentRun:
-    """Codex `exec --json`. Usage is reported per turn, not per model call, so the peak context of a
-    single call is not observable: peak_context_tokens stays None. No cost is reported."""
+    """Codex `exec --json`. Usage is reported per turn; the per-call peak comes from the rollout
+    file (see CodexAgent.invoke). No cost is reported."""
     run = AgentRun(tool_calls=0, turns=0)
     totals = {"input_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 0}
     seen_usage = False
@@ -350,6 +367,14 @@ class CodexAgent(_CLI):
 
     def parse(self, text):
         return parse_codex_events(text)
+
+    def invoke(self, cmd, repo, home):
+        run = super().invoke(cmd, repo, home)
+        codex_home = Path(self.env(home)["CODEX_HOME"]) if self.isolate else Path.home() / ".codex"
+        if run.session_id:
+            texts = [p.read_text(errors="replace") for p in (codex_home / "sessions").rglob(f"*{run.session_id}*.jsonl")]
+            run.peak_context_tokens = codex_peak_context("\n".join(texts))
+        return run
 
     def start(self, sc, repo, home, prompt, profile):
         return self.invoke(["codex", "exec", *self.flags(), prompt], repo, home)

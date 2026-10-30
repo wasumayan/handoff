@@ -59,7 +59,7 @@ Per run (one scenario x source x agent x variant x repeat):
 | `turns`, `tool calls` | agent steps |
 | `input tok` | uncached + cache-read + cache-write input tokens, summed over the run |
 | `output tok` | output tokens |
-| `peak ctx` | largest single model call's input: the context window the run needed (Claude Code only) |
+| `peak ctx` | largest single model call's input: the context window the run needed (Claude Code, Codex, stand-in) |
 | `agent s` | wall time of the agent |
 | `cost`, `cost/pass` | USD as reported by the CLI (Claude Code only) |
 
@@ -154,6 +154,6 @@ variant, so they are controls, not tests.
   working directory rewritten to `/WORKDIR`.
 - Recall is regex-based. A model-written handoff that paraphrases can score lower than it deserves.
   Use `--judge`, or read the saved `handoff.md`.
-- Codex reports usage per turn, not per model call, so `peak ctx` is n/a for it, and it reports no cost.
+- Codex reports no cost. Its `peak ctx` comes from the rollout file it writes per session.
 - The `adapted` variant, the stand-in agent and the judge share one backend model.
 - Agent behaviour varies run to run. Use `--runs 3` or more before drawing conclusions.
