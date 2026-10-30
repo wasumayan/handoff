@@ -2,7 +2,7 @@ from handoff.sources.claude_code import ClaudeCodeSource, project_slug
 
 
 def test_slug():
-    assert project_slug("/home/user/handoff") == "-home-user-handoff"
+    assert project_slug("/handoff-test/user/handoff") == "-handoff-test-user-handoff"
     assert project_slug("/Users/x/my.proj_1") == "-Users-x-my-proj-1"
 
 
