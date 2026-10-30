@@ -14,6 +14,41 @@ the recipient last saw the project, and (d) writing into the recipient's native 
 without clobbering what is already there. Whether the model-adapted step beats a plain structured
 dump is an open question; `eval/` exists to answer it, not to assume it.
 
+## Current status (for whoever runs the eval)
+
+**Done:**
+- The tool works on real Claude Code and Codex sessions.
+- The eval harness is built: five synthetic scenarios, eight handoff variants, and the Claude Code
+  and Codex agents. All tests pass.
+- Each CLI was smoke-tested once. That shows the plumbing works; it is not a result.
+
+**Not done:** the actual eval runs. That's the next step.
+
+**Run these, in order** (details in `eval/README.md`):
+
+```bash
+git clone https://github.com/wasumayan/handoff && cd handoff
+git checkout claude/happy-mayer-tnvnhz
+uv sync --extra dev && uv run pytest -q          # needs Python 3.11+ and uv; all tests should pass
+
+# install the claude and codex CLIs, then:
+export ANTHROPIC_API_KEY=...  OPENAI_API_KEY=...
+export HANDOFF_BASE_URL=https://api.openai.com/v1 HANDOFF_MODEL=<an OpenAI model> HANDOFF_API_KEY=$OPENAI_API_KEY
+
+uv run python eval/run.py doctor --live          # 1. checks setup; makes one tiny paid call per CLI
+uv run python eval/run.py score                  # 2. free: what each handoff variant contains
+uv run python eval/run.py run --agent claude --scenarios 01 --variants dump --out eval/out/try
+                                                 # 3. one run, to see the real cost per run
+uv run python eval/run.py run --agent claude --runs 3 --out eval/out/claude   # 4. full runs
+uv run python eval/run.py run --agent codex  --runs 3 --out eval/out/codex
+```
+
+Then send back `eval/out/claude/results.md` and `eval/out/codex/results.md`.
+
+The agents edit files and run commands without asking, so use a VM or container. Each full run is
+about 120 agent runs. Claude Code calls are capped at $2 each (`--max-budget-usd`). If a run is
+interrupted, rerun the same command: finished runs are skipped.
+
 ## Install
 
 ```bash
