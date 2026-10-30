@@ -1,3 +1,5 @@
+import time
+
 from handoff.redact import redact
 
 
@@ -23,13 +25,17 @@ def test_no_false_positives_seen_in_real_sessions():
         "token=next((p.read_text().strip() for p in candidates if p.exists()), None)",
         "TOKEN_FILE_PRESENT=/Users/me/.cache/tool/token",
         "    sensitive_tokens: set[str],",
-        "        private_key=str(project_root / 'keys' / 'id_ed25519')",
+        # unclosed calls (`private_key=str(project_root / ...`) are redacted: the value stops at the
+        # space, and a call is only skipped when it is visibly closed
+        "        private_key=str(project_root)",
+        'API_KEY="$OPENAI_API_KEY"',
         'api_key_file="/Users/me/.service_api_key"',
         "rg -n 'Authorization: Bearer [A-Za-z0-9]|SERVICE_API_KEY=[A-Za-z0-9._-]{24,})'",
         "awk '/^(export|OPENAI_API_KEY=|secret|key|token)/'",
         '{"output":"OPENAI_API_KEY=UNSET\\nSERVICE_API_KEY=UNSET\\n"}',
         '{"yield_time_ms":10000,"max_output_tokens":20000000}',
         '"cached_tokens": 123456789, "original_token_count": 987654321',
+        '"input_tokens": 4769438, "output_tokens": 101524,…',
     ]:
         assert redact(s) == (s, 0), s
 
@@ -58,3 +64,26 @@ def test_recall_kept_while_fixing_false_positives():
         for secret in (ant, proj, "p@ss!w0rd#2026", "correct-horse-battery", "abcd1234efgh5678",
                        "Zx9_Yw8-Vu7_Ts6"):
             assert secret not in out, leak
+
+
+def test_recall_for_unusual_keys_and_values():
+    or_key = "sk-or-v1-" + "0123456789abcdef" * 4
+    for text, secret in [
+        ("OPENROUTER=" + or_key, or_key),
+        ("key: sk-abc_def-GHI123jkl-mno456", "sk-abc_def-GHI123jkl-mno456"),
+        ("GITHUB_TOKENS=tok_9f8e7d6c5b4a", "tok_9f8e7d6c5b4a"),
+        ('PASSWORD="$ecretPass99"', "$ecretPass99"),
+        ("SECRET=.hidden-Value-77", ".hidden-Value-77"),
+        ("password=(Paren)Pass42", "(Paren)Pass42"),
+        ("API_KEY={curly}Key8812", "{curly}Key8812"),
+        (r"DB_PASSWORD=back\slash\Pass9", r"back\slash\Pass9"),
+        ('{\\"api_key\\": \\"abcd1234efgh5678\\"}', "abcd1234efgh5678"),
+    ]:
+        out, n = redact(text)
+        assert secret not in out and n >= 1, text
+
+
+def test_long_values_redacted_quickly():
+    t0 = time.perf_counter()
+    out, n = redact("API_KEY=" + "a(" * 50_000)
+    assert n == 1 and time.perf_counter() - t0 < 1

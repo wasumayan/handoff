@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import re
 
+# Prefixes are unanchored where the prefix is distinctive: keys appear right after a JSON-escaped
+# "\n" or a URL-encoded "%3D".
+_SK_START = r"(?:(?<![A-Za-z])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # No \b on prefixes: keys appear right after JSON-escaped "\n" and URL-encoded "%3D".
     ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}")),
-    # Real key structure, so "Task-specific-retry-..." in prose is not a key.
-    ("openai", re.compile(r"sk-(?:proj|svcacct|admin|None)-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{32,}")),
+    ("openrouter", re.compile(r"sk-or-v1-[A-Za-z0-9]{32,}")),
+    # Known prefixes and legacy all-alphanumeric keys anywhere; any other sk-... only where "sk"
+    # does not end a word, so "Task-specific-retry-..." in prose is not a key.
+    ("openai", re.compile(r"sk-(?:proj|svcacct|admin|None)-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{32,}|"
+                          + _SK_START + r"sk-[A-Za-z0-9_\-]{20,}")),
     ("huggingface", re.compile(r"hf_[A-Za-z0-9]{30,}")),
     ("runpod", re.compile(r"rpa_[A-Za-z0-9]{30,}")),
     ("github", re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}")),
@@ -20,14 +26,38 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
 ]
-# key=value / key: value where the key smells secret and the value is long enough to be one,
-# anywhere in a line (`cd x && HF_TOKEN=... cmd`, `"api_key": "..."`). Errs toward redacting: a
-# miss leaks a key, a false positive loses a few chars. Only values that are clearly not secrets
-# are skipped: LLM token counts (`max_tokens`), paths, regexes and code (`token=next((...`). The
-# value stops at a backslash, so an escaped `UNSET\n...` is too short to match.
+# key=value / key: value where the key smells secret, anywhere in a line (`cd x && HF_TOKEN=...
+# cmd`, `"api_key": "..."`, JSON-escaped `\"api_key\": \"...\"`). Errs toward redacting: a miss
+# leaks a key, a false positive loses a few chars. The value runs to whitespace, a quote, or a
+# JSON escape (\n \t \"), so an escaped `UNSET\n...` is too short to match; other backslashes are
+# part of the value.
 ENV_LINE = re.compile(
-    r"(?i)((?<![A-Za-z0-9_])(?:export\s+)?[A-Z0-9_]*(?:SECRET|TOKEN(?!S|_COUNT)|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*['\"]?\s*[=:]\s*)(['\"]?)(?![/~.\[|<{($]|\w+[\[(])([^\s'\"\\]{8,})"
+    r"(?i)((?<![A-Za-z0-9_])(?:export\s+)?[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY)"
+    r"[A-Z0-9_]*(?:\\?['\"])?\s*[=:]\s*)((?:\\?['\"])?)((?:[^\s'\"\\]|\\(?![nrt\"\\]))+)"
 )
+MIN_SECRET_CHARS = 8
+SHAPE_CHECK_CHARS = 256  # NOT_SECRET is quadratic; long values are redacted unchecked
+# Whole values that are clearly not secrets.
+NOT_SECRET = re.compile(
+    r"(?:~?/|\./)\S*"  # a path
+    r"|\$\{?[A-Z_][A-Z0-9_]*\}?[,;)\]}]*"  # a bare $ENV_VAR reference (upper case: not $ecret)
+    r"|[\w.]+\(.*\).*|[\w.]+\[.*\].*"  # code: a call or subscript, closed (`set[str],`)
+    r"|.*(?:\]\{\d|\][*+?]|\|\w+\|).*"  # a regex fragment (`[A-Za-z]{24,}`, `|secret|key|`)
+    r"|\[REDACTED:\w+\].*"  # already redacted by a pattern above
+)
+# max_tokens=20000000, "cached_tokens": 123456789, or a count clipped by the parser ("101524,…")
+TOKEN_COUNT = re.compile(r"\d[\d_.,]*[,;)\]}…]*")
+
+
+def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
+    key, quote, value = m.group(1), m.group(2), m.group(3)
+    if (
+        len(value) < MIN_SECRET_CHARS
+        or (len(value) <= SHAPE_CHECK_CHARS and NOT_SECRET.fullmatch(value))
+        or ("TOKEN" in key.upper() and TOKEN_COUNT.fullmatch(value))
+    ):
+        return m.group(0), False
+    return f"{key}{quote}[REDACTED:env]", True
 
 
 def redact(text: str) -> tuple[str, int]:
@@ -36,9 +66,16 @@ def redact(text: str) -> tuple[str, int]:
     for tag, pat in PATTERNS:
         text, n = pat.subn(f"[REDACTED:{tag}]", text)
         count += n
-    text, n = ENV_LINE.subn(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED:env]", text)
-    count += n
-    return text, count
+    hits = 0
+
+    def sub(m: re.Match[str]) -> str:
+        nonlocal hits
+        out, hit = _redact_env(m)
+        hits += hit
+        return out
+
+    text = ENV_LINE.sub(sub, text)
+    return text, count + hits
 
 
 def redact_bundle(bundle) -> int:
