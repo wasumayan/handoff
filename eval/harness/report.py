@@ -70,8 +70,8 @@ def outcome_table(rows: list[Result]) -> str:
     for r in rows:
         by[(r.agent, r.variant)].append(r)
     out = ["| agent | variant | runs | pass 1st | pass | nudges | questions | prefs ok | redo | turns | "
-           "tool calls | input tok | output tok | peak ctx | agent s | cost | cost/pass | errors |",
-           "|" + "---|" * 18]
+           "tool calls | input tok | output tok | peak ctx | agent s | cost | cost/pass | errors | leaks |",
+           "|" + "---|" * 19]
     for (agent, v) in sorted(by):
         rs = by[(agent, v)]
         prefs = [sum(r.prefs.values()) / len(r.prefs) for r in rs if r.prefs]
@@ -89,7 +89,7 @@ def outcome_table(rows: list[Result]) -> str:
             f"{_fmt([_ar(r, 'tool_calls') for r in rs], digits=1)} | {_fmt([_total_input(r) for r in rs])} | "
             f"{_fmt([_ar(r, 'output_tokens') for r in rs])} | {_fmt([_ar(r, 'peak_context_tokens') for r in rs])} | "
             f"{_fmt([_ar(r, 'seconds') for r in rs], digits=0)} | {_fmt(costs, money=True)} | {cpp} | "
-            f"{errs}{f' ({tos} timeout)' if tos else ''} |")
+            f"{errs}{f' ({tos} timeout)' if tos else ''} | {sum(r.leaked for r in rs)} |")
     return "\n".join(out)
 
 
@@ -146,7 +146,7 @@ def to_csv(rows: list[Result]) -> str:
             "build_seconds", "recall_facts", "recall_corrections", "recall_dead_ends", "passed_first", "passed",
             "nudges", "prefs_ok", "redo", "turns", "tool_calls", "input_tokens", "cache_read_tokens",
             "cache_write_tokens", "output_tokens", "peak_context_tokens", "agent_seconds", "cost_usd",
-            "questions", "blocked_actions", "timed_out", "error"]
+            "questions", "blocked_actions", "timed_out", "leaked", "error"]
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(cols)
@@ -158,5 +158,5 @@ def to_csv(rows: list[Result]) -> str:
                     _ar(r, "turns"), _ar(r, "tool_calls"), _ar(r, "input_tokens"), _ar(r, "cache_read_tokens"),
                     _ar(r, "cache_write_tokens"), _ar(r, "output_tokens"), _ar(r, "peak_context_tokens"),
                     _ar(r, "seconds"), _ar(r, "cost_usd"), _ar(r, "questions"), _ar(r, "blocked_actions"),
-                    _ar(r, "timed_out"), r.error])
+                    _ar(r, "timed_out"), r.leaked, r.error])
     return buf.getvalue()

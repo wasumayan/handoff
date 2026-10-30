@@ -48,6 +48,7 @@ class AgentRun:
     blocked_actions: int = 0  # tool calls refused by the agent's permission system
     commands: list[str] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
+    paths_read: list[str] = field(default_factory=list)
     final_message: str = ""
     session_id: str = ""
     transcript_tail: str = ""
@@ -115,6 +116,8 @@ def parse_claude_stream(text: str) -> AgentRun:
                     run.commands.append(inp["command"])
                 elif name in ("Write", "Edit", "MultiEdit", "NotebookEdit") and inp.get("file_path"):
                     run.files_written.append(str(inp["file_path"]))
+                elif name in ("Read", "Glob", "Grep"):
+                    run.paths_read += [str(inp[k]) for k in ("file_path", "path", "pattern") if inp.get(k)]
         elif t == "result":
             u = r.get("usage") or {}
             run.input_tokens = u.get("input_tokens")
@@ -273,13 +276,15 @@ class StandInAgent(Agent):
 class _CLI(Agent):
     binary = ""
 
-    def __init__(self, model: str = "", isolate: bool = True, timeout: int = 1200, extra: list[str] | None = None):
+    def __init__(self, model: str = "", isolate: bool = True, timeout: int = 1200, extra: list[str] | None = None,
+                 max_budget_usd: float = 0.0):
         if not shutil.which(self.binary):
             raise SystemExit(f"--agent {self.name}: `{self.binary}` is not on PATH")
         self.model, self.isolate, self.timeout, self.extra = model, isolate, timeout, extra or []
+        self.max_budget_usd = max_budget_usd
 
     def env(self, home: Path) -> dict[str, str]:
-        return dict(os.environ)
+        return base_env()
 
     def parse(self, text: str) -> AgentRun:
         raise NotImplementedError
@@ -311,7 +316,7 @@ class ClaudeAgent(_CLI):
     profile = "claude"
 
     def env(self, home):
-        env = dict(os.environ)
+        env = base_env()
         if self.isolate:
             env["CLAUDE_CONFIG_DIR"] = str(home / "claude")
         return env
@@ -324,6 +329,8 @@ class ClaudeAgent(_CLI):
                "--allowedTools", "Bash", "Read", "Edit", "Write", "Glob", "Grep"]
         if self.model:
             cmd += ["--model", self.model]
+        if self.max_budget_usd:
+            cmd += ["--max-budget-usd", str(self.max_budget_usd)]
         return cmd + self.extra
 
     def parse(self, text):
@@ -344,7 +351,7 @@ class CodexAgent(_CLI):
     profile = "codex"
 
     def env(self, home):
-        env = dict(os.environ)
+        env = base_env()
         if self.isolate:
             codex_home = home / "codex"
             if not codex_home.exists():
@@ -385,14 +392,24 @@ class CodexAgent(_CLI):
         return self.invoke(["codex", "exec", "resume", *self.flags(), prev.session_id, text], repo, home)
 
 
+def base_env() -> dict[str, str]:
+    """The agent's environment: the operator's, minus pointers back into the eval checkout. PATH keeps
+    the eval's Python (agents need pytest), so a determined agent can still find the repo; runs that
+    mention it are flagged by the runner."""
+    env = dict(os.environ)
+    for k in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "HANDOFF_HOME_OVERRIDE"):
+        env.pop(k, None)
+    return env
+
+
 def make_agent(name: str, *, backend=None, model: str = "", isolate: bool = True, timeout: int = 1200,
-               max_turns: int = 30, extra: list[str] | None = None) -> Agent:
+               max_turns: int = 30, extra: list[str] | None = None, max_budget_usd: float = 0.0) -> Agent:
     if name == "fake":
         return FakeAgent()
     if name == "standin":
         return StandInAgent(backend, max_turns)
     if name == "claude":
-        return ClaudeAgent(model, isolate, timeout, extra)
+        return ClaudeAgent(model, isolate, timeout, extra, max_budget_usd)
     if name == "codex":
         return CodexAgent(model, isolate, timeout, extra)
     raise SystemExit(f"unknown agent {name!r}; known: fake, standin, claude, codex")

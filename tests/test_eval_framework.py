@@ -164,7 +164,7 @@ def test_run_cell_isolates_the_agent(tmp_path):
     assert all(s[k] for k in ("outside_repo_root", "source_gone", "no_handoff_out", "no_hidden",
                               "no_solution", "no_dot_handoff")), s
     assert "<!-- handoff:begin -->" in s["instruction"] and sc.task.split()[0] in s["prompt"]
-    assert all(r.prefs.values()) and r.redo == 0
+    assert all(r.prefs.values()) and r.redo == 0 and not r.leaked
     saved = tmp_path / sc.id / "claude_code" / "probe" / "dump" / "run0"
     assert (saved / "handoff.md").read_text() and (saved / "final.diff").read_text()
     assert load_results(tmp_path)[0].key == r.key
@@ -184,6 +184,32 @@ class Lazy(FakeAgent):
         done = super().start(sc, repo, home, text, profile)
         done.input_tokens, done.output_tokens = 50, 5
         return done
+
+
+class Snoop(FakeAgent):
+    """Looks for the answers in the eval checkout."""
+
+    name = "snoop"
+
+    def start(self, sc, repo, home, prompt, profile):
+        run = super().start(sc, repo, home, prompt, profile)
+        run.commands = [f"cat {SCENARIOS}/{sc.id}/solution/app.py"]
+        return run
+
+
+def test_runs_that_reach_into_the_eval_checkout_are_flagged(tmp_path):
+    r = run_cell(load_scenarios(["01"])[0], "codex", Snoop(), load_variants(only=["none"])[0], 0, tmp_path)
+    assert r.leaked
+    assert "| 1 |" in report.outcome_table([r]).splitlines()[-1][-8:]
+
+
+def test_agent_env_drops_pointers_into_the_checkout(monkeypatch):
+    from harness.agents import base_env
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(ROOT / ".venv"))
+    monkeypatch.setenv("PYTHONPATH", str(ROOT))
+    env = base_env()
+    assert "VIRTUAL_ENV" not in env and "PYTHONPATH" not in env
 
 
 def test_nudges_count_as_manual_input(tmp_path):

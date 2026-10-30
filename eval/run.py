@@ -159,7 +159,8 @@ def _judge(backend: Backend | None):
 def cmd_run(a) -> int:
     cells, backend = _matrix(a)
     agent = make_agent(a.agent, backend=backend, model=a.model, isolate=not a.no_isolate,
-                       timeout=a.timeout, max_turns=a.max_turns, extra=a.agent_arg)
+                       timeout=a.timeout, max_turns=a.max_turns, extra=a.agent_arg,
+                       max_budget_usd=a.max_budget_usd)
     out = Path(a.out or ROOT / "eval" / "out" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"))
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps({k: v for k, v in vars(a).items() if k != "fn"}, indent=2))
@@ -259,6 +260,8 @@ def main(argv=None) -> int:
         p.add_argument("--model", default="", help="model for the claude/codex agent")
         p.add_argument("--agent-arg", action="append", default=[], help="extra CLI arg for the agent (repeatable)")
         p.add_argument("--timeout", type=int, default=1200, help="seconds per agent invocation")
+        p.add_argument("--max-budget-usd", type=float, default=2.0,
+                       help="Claude Code spend cap per invocation (0 = none); Codex has no equivalent")
         p.add_argument("--max-turns", type=int, default=30, help="stand-in agent turn cap")
         p.add_argument("--no-isolate", action="store_true", help="use your own claude/codex config and login")
         p.add_argument("--judge", action="store_true", help="grade the rubric with the backend model")

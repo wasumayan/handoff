@@ -62,6 +62,7 @@ Per run (one scenario x source x agent x variant x repeat):
 | `peak ctx` | largest single model call's input: the context window the run needed (Claude Code, Codex, stand-in) |
 | `agent s` | wall time of the agent |
 | `cost`, `cost/pass` | USD as reported by the CLI (Claude Code only) |
+| `leaks` | runs whose commands, file reads or transcript mention the eval checkout (where solutions and hidden tests live). A pass there is suspect: inspect it or drop it |
 
 Per handoff, with no model involved (`score`): size in chars and estimated tokens, and **recall**:
 the share of the scenario's session-only facts, user corrections and dead ends the handoff text
@@ -119,7 +120,9 @@ uv run python eval/run.py report eval/out/claude
 (`--rerun` redoes them). Each cell keeps `result.json`, the exact `handoff.md` the agent saw, the
 `final.diff`, and the end of the agent transcript. Useful flags: `--variants none,dump,ideal`,
 `--scenarios 01,04`, `--sources codex`, `--model`, `--timeout`, `--max-nudges`,
-`--agent-arg <extra CLI arg>`, `--judge` (grades each scenario's rubric with the backend model).
+`--agent-arg <extra CLI arg>`, `--judge` (grades each scenario's rubric with the backend model),
+`--max-budget-usd` (Claude Code spend cap per invocation, default 2.0; Codex has no equivalent, so
+`--timeout` bounds it).
 
 A full run is 5 scenarios x 1 source x 8 variants x 3 repeats = 120 agent runs per agent, plus
 nudges. Use the calibration run to estimate cost before starting one.

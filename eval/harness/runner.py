@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .agents import NUDGE, Agent, AgentRun, merge, python_for_tests
 from .scenario import (
+    ROOT,
     Scenario,
     git,
     handoff_recall,
@@ -54,6 +55,7 @@ class Result:
     redo: int = 0
     rubric: dict = field(default_factory=dict)
     agent_run: dict = field(default_factory=dict)
+    leaked: bool = False  # the agent's commands, reads or transcript mention the eval checkout
     test_output: str = ""
     error: str = ""
 
@@ -117,6 +119,8 @@ def run_cell(sc: Scenario, source: str, agent: Agent, v: Variant, run: int, out:
         res.prefs = pref_checks(work.repo, sc.checks, ar.commands)
         res.redo = redo_count(sc.checks, ar.commands, ar.files_written)
         res.agent_run = {k: v for k, v in asdict(ar).items() if k not in ("transcript_tail",)}
+        trail = "\n".join([*ar.commands, *ar.paths_read, *ar.files_written, ar.transcript_tail])
+        res.leaked = str(ROOT) in trail or "eval/scenarios" in trail
         res.error = ar.error
         if judge is not None:
             res.rubric = judge(sc, work.repo, built.text, ar.transcript_tail)
