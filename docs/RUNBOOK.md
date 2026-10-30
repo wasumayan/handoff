@@ -10,8 +10,8 @@ No, for the tool. `handoff` is pure Python and reads files. A GPU matters only i
 *backend model* (the one that writes `next.md`, and the stand-in recipient agent in `eval/`) to be a
 local open-weight model rather than an API. Reasons to do that: cost on repeated eval runs, keeping
 session content off third-party APIs, and the product story ("works with a local model"). If you
-have an OpenAI or OpenRouter key, start with that; it removes a whole class of setup problems. Della
-comes in at step 5.
+have an OpenAI or OpenRouter key, start with that; it removes a whole class of setup problems. A
+self-hosted GPU server is step 5.
 
 ## 1. Install (laptop)
 
@@ -33,10 +33,10 @@ uv venv && . .venv/bin/activate && uv pip install -e ".[dev]"
 pytest -q
 ```
 
-## 2. Point it at a repo Claude Code has worked in (e.g. murphy)
+## 2. Point it at a repo Claude Code has worked in
 
 ```bash
-cd ~/path/to/murphy
+cd ~/path/to/your-project
 handoff sources -v
 ```
 
@@ -50,9 +50,9 @@ files (`head -3 <path>`) and the `handoff sources -v` output.
 # read-only: prints exactly what a model would receive, writes nothing
 handoff create --to codex --dry-run | less
 
-# deterministic handoff, written OUTSIDE murphy
-handoff create --to codex --no-llm --out /tmp/murphy-handoff
-less /tmp/murphy-handoff/HANDOFF.md
+# deterministic handoff, written OUTSIDE the project
+handoff create --to codex --no-llm --out /tmp/project-handoff
+less /tmp/project-handoff/HANDOFF.md
 ```
 
 What to look at in `session.md`: are the human turns intact, are tool calls one line each, is any
@@ -65,9 +65,9 @@ What to look at in `session.md`: are the human turns intact, are tool calls one 
 export HANDOFF_BASE_URL=https://api.openai.com/v1   # or https://openrouter.ai/api/v1
 export HANDOFF_API_KEY=...
 export HANDOFF_MODEL=gpt-5                           # any chat model with JSON output
-handoff create --to codex --out /tmp/murphy-handoff-llm
-diff <(sed -n '/# Where things stand/,/# What changed/p' /tmp/murphy-handoff/HANDOFF.md) \
-     <(sed -n '/# Where things stand/,/# What changed/p' /tmp/murphy-handoff-llm/HANDOFF.md)
+handoff create --to codex --out /tmp/project-handoff-llm
+diff <(sed -n '/# Where things stand/,/# What changed/p' /tmp/project-handoff/HANDOFF.md) \
+     <(sed -n '/# Where things stand/,/# What changed/p' /tmp/project-handoff-llm/HANDOFF.md)
 ```
 
 Only `next.md` differs between the two runs by design. Judge it: does it say anything the
@@ -87,81 +87,28 @@ Results: `eval/out/<timestamp>/results.md`. The number that matters is `pass` pe
 `prefs ok`. Arm C costs one extra model call per handoff; if it does not move `pass` or `prefs`
 relative to B, say so in the README.
 
-## 5. Della: serving a local backend (optional)
+## 5. Serving a local backend (optional)
 
-Use this when you want arm C and the stand-in agent to run against an open model, or to test the
-"local model" story. The plan: run vLLM's OpenAI-compatible server on one GPU node, tunnel the port
-to your laptop, point `HANDOFF_BASE_URL` at it. `handoff` itself still runs on the laptop.
-
-**Verify before use.** Partition names, GRES syntax, time limits and module names change; the
-Della page (researchcomputing.princeton.edu/systems/della) is authoritative and was not reachable
-from the environment that wrote this. Items marked VERIFY are from memory or secondary sources.
-
-Sizing: a 7B to 14B instruct model in bf16 fits one A100 80GB; a 30B-class model wants two, or one
-with AWQ/FP8 quantization. For writing `next.md` and tool-calling as a stand-in recipient, something
-like `Qwen/Qwen2.5-Coder-14B-Instruct` or `Qwen/Qwen3-14B` is enough. A MIG slice (10 to 20 GB) is
-only enough for a 7B at low context; not recommended since the handoff prompt can be 20k to 40k
-tokens.
+Use this when you want arm C and the stand-in agent to run against an open model. Run vLLM's
+OpenAI-compatible server on any machine with a GPU (a 7B-14B instruct model in bf16 fits one 80 GB
+GPU), tunnel the port to your laptop, and point `HANDOFF_BASE_URL` at it. `handoff` itself still
+runs on the laptop.
 
 ```bash
-ssh <netid>@della.princeton.edu          # VPN or campus network required (VERIFY)
-
-# one-time: environment on /scratch (home is small and not for this)
-cd /scratch/gpfs/$USER                   # VERIFY path
-module load anaconda3/2024.6             # VERIFY module name: `module avail anaconda3`
-python -m venv vllm-env && . vllm-env/bin/activate
-pip install vllm                         # pulls torch; takes a while
-export HF_HOME=/scratch/gpfs/$USER/hf    # keep weights on scratch
-huggingface-cli download Qwen/Qwen2.5-Coder-14B-Instruct   # needs a HF token for gated models
-
-# interactive GPU allocation (VERIFY partition/gres; `sinfo -o "%P %G %l"` lists them)
-salloc --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=64G --gres=gpu:1 --time=02:00:00
-# on the allocated node:
-. /scratch/gpfs/$USER/vllm-env/bin/activate
-hostname                                 # note it, e.g. della-l05g3
+# on the GPU machine
+python -m venv vllm-env && . vllm-env/bin/activate && pip install vllm
 python -m vllm.entrypoints.openai.api_server \
   --model Qwen/Qwen2.5-Coder-14B-Instruct --dtype bfloat16 \
-  --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser hermes \
-  --port 8000
-```
+  --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser hermes --port 8000
 
-Batch alternative (same thing as a job script; adjust and `sbatch vllm.slurm`):
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=vllm
-#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=64G
-#SBATCH --gres=gpu:1                      # VERIFY; some clusters use --gres=gpu:a100:1 or -C a100
-#SBATCH --time=04:00:00
-#SBATCH --output=vllm-%j.out
-. /scratch/gpfs/$USER/vllm-env/bin/activate
-export HF_HOME=/scratch/gpfs/$USER/hf
-hostname > vllm-host-$SLURM_JOB_ID.txt
-python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-Coder-14B-Instruct \
-  --dtype bfloat16 --max-model-len 32768 --enable-auto-tool-choice --tool-call-parser hermes --port 8000
-```
-
-From the laptop, tunnel through the login node to the compute node and use it:
-
-```bash
-ssh -N -L 8000:<compute-node-hostname>:8000 <netid>@della.princeton.edu &
-curl -s localhost:8000/v1/models | head -c 300
+# on the laptop
+ssh -N -L 8000:localhost:8000 <user>@<gpu-host> &
 export HANDOFF_BASE_URL=http://localhost:8000/v1 HANDOFF_MODEL=Qwen/Qwen2.5-Coder-14B-Instruct HANDOFF_API_KEY=x
-handoff create --to codex --out /tmp/murphy-handoff-local
-python eval/run.py --recipient agent --runs 3 --judge
 ```
 
-Notes:
-- The tool-calling flags (`--enable-auto-tool-choice --tool-call-parser hermes`) are needed only for
-  the stand-in agent; `handoff create` uses plain JSON output. Parser name depends on the model
-  family (hermes for Qwen, llama3_json for Llama).
-- Compute nodes on most Princeton clusters have no outbound internet (VERIFY); download weights on
-  the login node first, which is why `HF_HOME` lives on scratch.
-- Do not run vLLM on the login node.
-- If `salloc` queues for long, request `--time=00:59:00`: short jobs are backfilled quickly.
-- Ollama is the simpler alternative if it is installed or you can place the static binary on
-  scratch; it also serves `/v1`. vLLM is preferred here because it handles 30k-token prompts and
-  concurrent eval runs properly.
+The tool-calling flags are needed only for the stand-in agent; the parser name depends on the model
+family (hermes for Qwen, llama3_json for Llama). On a SLURM cluster, run the server inside an
+allocation, not on the login node, and download weights where the compute nodes can read them.
 
 ## 6. Report back
 
