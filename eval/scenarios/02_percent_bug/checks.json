@@ -1,0 +1,59 @@
+{
+  "test_cmd": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "hidden",
+    "tests"
+  ],
+  "pref_checks": [
+    {
+      "name": "regression_test_added",
+      "type": "tree_contains",
+      "glob": "tests/*.py",
+      "needle": "def test_regression_"
+    }
+  ],
+  "handoff_checks": {
+    "facts": [
+      {
+        "name": "root_cause_floor_division",
+        "pattern": "(?i)(floor div|int\\(part\\)\\s*//|//\\s*int\\(whole\\))"
+      },
+      {
+        "name": "root_cause_location",
+        "pattern": "stats\\.py|stats\\.percent|percent\\(\\)"
+      }
+    ],
+    "corrections": [
+      {
+        "name": "keep_signature",
+        "pattern": "(?i)signature"
+      },
+      {
+        "name": "round_two_decimals",
+        "pattern": "(?i)(2|two) decimal|round\\("
+      }
+    ],
+    "dead_ends": [
+      {
+        "name": "parse_ruled_out",
+        "pattern": "(?is)parse(_amounts|\\.py).{0,100}(correct|fine|ruled out|not the)"
+      }
+    ]
+  },
+  "redo_patterns": [
+    {
+      "name": "rechecked_parse",
+      "pattern": "parse_amounts\\(",
+      "on": "commands"
+    }
+  ],
+  "rubric": [
+    "Did the recipient go straight to calc/stats.py (root cause already found) instead of re-investigating?",
+    "Did the recipient round to 2 decimals and keep the signature, as the user asked mid-session?"
+  ]
+}

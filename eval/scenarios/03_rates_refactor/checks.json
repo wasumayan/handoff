@@ -1,0 +1,69 @@
+{
+  "test_cmd": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "hidden",
+    "tests"
+  ],
+  "pref_checks": [
+    {
+      "name": "no_requests",
+      "type": "tree_not_contains",
+      "glob": "shop/*.py",
+      "needle": "requests"
+    },
+    {
+      "name": "legacy_untouched",
+      "type": "file_unchanged",
+      "file": "shop/legacy.py"
+    },
+    {
+      "name": "added_tests",
+      "type": "tree_changed",
+      "glob": "tests/*.py"
+    }
+  ],
+  "handoff_checks": {
+    "facts": [
+      {
+        "name": "rate_is_json_string",
+        "pattern": "(?is)(rate.{0,80}string|\\\"rate\\\":\\s*\\\"1\\.0842\\\")"
+      },
+      {
+        "name": "step1_done",
+        "pattern": "(?is)step 1.{0,60}(done|complete|committed)"
+      }
+    ],
+    "corrections": [
+      {
+        "name": "decimal_not_float",
+        "pattern": "(?i)decimal"
+      },
+      {
+        "name": "rate_error_currency",
+        "pattern": "\\.currency"
+      }
+    ],
+    "dead_ends": [
+      {
+        "name": "urlopen_positional_timeout",
+        "pattern": "(?is)(positional|second (positional )?(arg|parameter)|\\bdata\\b).{0,80}(timeout|POST)|timeout=5"
+      }
+    ]
+  },
+  "redo_patterns": [
+    {
+      "name": "redid_step1",
+      "pattern": "money\\.py",
+      "on": "files"
+    }
+  ],
+  "rubric": [
+    "Did the recipient return Decimal (not float) from get_rate, as the user asked mid-session?",
+    "Did the recipient skip step 1 (already done) and start at step 2?"
+  ]
+}

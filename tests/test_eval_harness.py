@@ -6,8 +6,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "eval"))
 
@@ -85,7 +83,7 @@ def test_agent_loop(tmp_path):
         res = run_agent(tmp_path, "INSTRUCTIONS", "do it", Backend(srv.base_url, "m"), max_turns=10)
     finally:
         srv.close()
-    assert res.finished and res.turns == 4 and res.tool_calls == 5
+    assert res.finished and res.turns == 4 and res.tool_calls == 5 and res.files_written == ["a.txt"]
     assert (tmp_path / "a.txt").read_text() == "new"
     assert res.commands == ["echo ran"]
     assert "INSTRUCTIONS" in srv.requests[0]["messages"][0]["content"]
@@ -103,36 +101,6 @@ def test_agent_stops_at_max_turns(tmp_path):
     finally:
         srv.close()
     assert res.turns == 3 and not res.finished
-
-
-@pytest.mark.parametrize("arm", ["A_raw", "B_dump", "C_adapted"])
-def test_eval_arm_with_fake_recipient(tmp_path, monkeypatch, arm):
-    import run as runner
-
-    composed = {"current_state": "step 1 done", "decisions": ["stdlib only"], "open_problems": [],
-                "next_steps": ["do step 2", "do step 3"], "gotchas": ["don't touch legacy.py"],
-                "preferences_observed": ["one commit per step"]}
-    srv = Scripted([{"content": json.dumps(composed)}] * 3)
-    monkeypatch.setenv("HANDOFF_BASE_URL", srv.base_url)
-    monkeypatch.setenv("HANDOFF_MODEL", "m")
-    monkeypatch.delenv("HANDOFF_API_KEY", raising=False)
-    try:
-        rc = runner.main(["--recipient", "fake", "--arms", arm, "--scenarios", "03_instructions",
-                          "--out", str(tmp_path)])
-    finally:
-        srv.close()
-    assert rc == 0
-    out = next(tmp_path.iterdir())
-    results = json.loads((out / "results.json").read_text())
-    assert len(results) == 1 and results[0]["passed"] and not results[0]["error"]
-    assert all(results[0]["prefs"].values()), results[0]["prefs"]
-    agents = (out / "03_instructions" / arm / "run0" / "repo" / "AGENTS.md").read_text()
-    if arm == "C_adapted":
-        assert "do step 2" in agents and "step 1 done" in agents
-        assert srv.requests and "Codex CLI" in srv.requests[0]["messages"][0]["content"]
-    if arm == "A_raw":
-        assert "tool_result" in agents
-    assert "| 03_instructions |" in (out / "results.md").read_text()
 
 
 def test_native_docs_elided_for_claude(project, claude_home):

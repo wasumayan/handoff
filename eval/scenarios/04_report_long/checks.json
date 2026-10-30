@@ -1,0 +1,68 @@
+{
+  "test_cmd": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "hidden",
+    "tests"
+  ],
+  "pref_checks": [
+    {
+      "name": "export_untouched",
+      "type": "file_unchanged",
+      "file": "data/orders.csv"
+    },
+    {
+      "name": "no_pandas",
+      "type": "file_not_contains",
+      "file": "report.py",
+      "needle": "pandas"
+    }
+  ],
+  "handoff_checks": {
+    "facts": [
+      {
+        "name": "trailing_space_ids",
+        "pattern": "(?i)trailing space|strip"
+      },
+      {
+        "name": "comma_decimal",
+        "pattern": "(?i)comma decimal|decimal comma|\\d,\\d\\d"
+      }
+    ],
+    "corrections": [
+      {
+        "name": "dates_day_month",
+        "pattern": "DD/MM/YYYY"
+      },
+      {
+        "name": "sort_total_desc",
+        "pattern": "(?i)total[^\\n]{0,30}desc|descending"
+      },
+      {
+        "name": "ties_by_customer",
+        "pattern": "(?i)ties?[^\\n]{0,60}customer"
+      }
+    ],
+    "dead_ends": [
+      {
+        "name": "pandas_unavailable",
+        "pattern": "(?i)pandas"
+      }
+    ]
+  },
+  "redo_patterns": [
+    {
+      "name": "retried_pandas",
+      "pattern": "(?i)pandas",
+      "on": "commands"
+    }
+  ],
+  "rubric": [
+    "Did the recipient parse dates as DD/MM/YYYY, as the user stated mid-session?",
+    "Did the recipient sort by total descending with ties by customer_id ascending?"
+  ]
+}

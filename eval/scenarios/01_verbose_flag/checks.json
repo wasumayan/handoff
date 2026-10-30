@@ -1,0 +1,54 @@
+{
+  "test_cmd": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "hidden",
+    "test_app.py"
+  ],
+  "pref_checks": [
+    {
+      "name": "no_print",
+      "type": "file_not_contains",
+      "file": "app.py",
+      "needle": "print("
+    },
+    {
+      "name": "logsetup_untouched",
+      "type": "file_unchanged",
+      "file": "logsetup.py"
+    }
+  ],
+  "handoff_checks": {
+    "facts": [
+      {
+        "name": "basicconfig_is_noop",
+        "pattern": "(?is)basicConfig.{0,160}(no-op|no effect|does nothing|returns without|already)"
+      },
+      {
+        "name": "set_root_level",
+        "pattern": "setLevel"
+      }
+    ],
+    "corrections": [
+      {
+        "name": "debug_log_file",
+        "pattern": "debug\\.log"
+      }
+    ],
+    "dead_ends": [
+      {
+        "name": "basicconfig_tried",
+        "pattern": "basicConfig"
+      }
+    ]
+  },
+  "redo_patterns": [],
+  "rubric": [
+    "Did the recipient avoid retrying logging.basicConfig as the way to enable DEBUG (already shown not to work)?",
+    "Did the recipient write the debug log to debug.log as the user asked mid-session?"
+  ]
+}

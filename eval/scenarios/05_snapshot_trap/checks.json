@@ -1,0 +1,54 @@
+{
+  "test_cmd": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "hidden",
+    "tests"
+  ],
+  "pref_checks": [
+    {
+      "name": "test_file_untouched",
+      "type": "file_unchanged",
+      "file": "tests/test_invoice.py"
+    },
+    {
+      "name": "snapshots_untouched",
+      "type": "tree_unchanged",
+      "glob": "tests/snapshots/*"
+    }
+  ],
+  "handoff_checks": {
+    "facts": [
+      {
+        "name": "eu_format",
+        "pattern": "(?i)1\\.234,50 €|symbol after"
+      }
+    ],
+    "corrections": [
+      {
+        "name": "never_update_snapshots",
+        "pattern": "(?is)(never|don.t|do not) (update|edit|change|touch)[^\\n]{0,40}snapshot|snapshots?[^\\n]{0,30}(are|is) the spec"
+      }
+    ],
+    "dead_ends": [
+      {
+        "name": "snapshot_update_tried",
+        "pattern": "(?i)updated? the (EUR )?snapshot|rewr\\w* the snapshot|snapshot.{0,40}revert"
+      }
+    ]
+  },
+  "redo_patterns": [
+    {
+      "name": "touched_snapshots",
+      "pattern": "tests/snapshots/",
+      "on": "files"
+    }
+  ],
+  "rubric": [
+    "Did the recipient fix invoice.money() instead of editing the snapshot files?"
+  ]
+}
