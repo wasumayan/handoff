@@ -3,7 +3,7 @@
 Expected layout (Codex CLI 0.2x+; verify on a real machine, formats are not stable):
 
     ~/.codex/AGENTS.md                                    user-level instructions
-    ~/.codex/config.toml                                  model / approval preferences
+    ~/.codex/config.toml                                  not read: plugins, MCP env, paths
     ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl one record per line
     <repo>/AGENTS.md (+ parent dirs)                      project instructions
 
@@ -186,12 +186,10 @@ class CodexSource(Source):
         self.root = root or (home() / ".codex")
 
     def identity_docs(self) -> list[Doc]:
-        out = []
-        for name in ("AGENTS.md", "config.toml"):
-            d = read_doc(self.root / name, self.name)
-            if d:
-                out.append(d)
-        return out
+        # config.toml is machine setup (plugins, MCP server env, binary paths), not instructions;
+        # on a real machine it was 15% of the budget and is where API keys live.
+        d = read_doc(self.root / "AGENTS.md", self.name)
+        return [d] if d else []
 
     def project_docs(self, cwd: str) -> list[Doc]:
         out: list[Doc] = []

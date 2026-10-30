@@ -24,7 +24,7 @@ def test_parse(project, codex_home):
 
 def test_layers(project, codex_home):
     src = CodexSource(codex_home)
-    assert {d.path.split("/")[-1] for d in src.identity_docs()} == {"AGENTS.md", "config.toml"}
+    assert {d.path.split("/")[-1] for d in src.identity_docs()} == {"AGENTS.md"}
     proj = src.project_docs(str(project))
     assert len(proj) == 1 and proj[0].path.endswith("AGENTS.md")
 
