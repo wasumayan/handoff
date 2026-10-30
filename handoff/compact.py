@@ -3,8 +3,12 @@
 Rules (in priority order):
   1. Never drop the first human turn or the last two messages of the newest session.
   2. Drop whole older sessions before trimming the newest one.
-  3. Within a session, trim oldest messages first: first shorten assistant prose, then drop
-     tool-call detail, then drop the message.
+  3. Within a session, trim oldest messages first: clip tool calls, then drop successful tool
+     calls (failures stay: they say what did not work), then shorten assistant prose (the
+     agent's own reports summarize its tool output), then drop assistant messages, and only
+     then human turns. Short human corrections ("use the staging server",
+     "don't stop after step 1") carry the preferences the next agent most needs; tool lines
+     were 90% of a real Codex session.
   4. Instruction docs (identity/project) are trimmed last and only from the end of each doc,
      because the recipient will usually read the originals from disk anyway.
 """
@@ -16,27 +20,37 @@ from dataclasses import replace
 from .model import Bundle, Message, Session
 
 ASSISTANT_TRIM_CHARS = 600
+ERROR_KEEP_CHARS = 200
 DOC_MIN_CHARS = 1500
 
 
 def _trim_message(m: Message, level: int) -> Message:
-    """level 1: shorten assistant prose. level 2: also drop tool results/inputs."""
+    """level 1: clip tool inputs, keep only error results. level 2: drop successful tool calls,
+    leaving a count. level 3: shorten assistant prose."""
     text = m.text
-    if m.role == "assistant" and level >= 1 and len(text) > ASSISTANT_TRIM_CHARS:
-        text = text[: ASSISTANT_TRIM_CHARS - 1].rstrip() + "…"
     tools = m.tool_calls
-    if level >= 2:
-        tools = [replace(t, input_summary=t.input_summary[:80], result_summary="") for t in tools]
-    return replace(m, text=text, tool_calls=tools)
+    if level >= 1:
+        tools = [replace(t, input_summary=t.input_summary[:80],
+                         result_summary=t.result_summary[:ERROR_KEEP_CHARS] if t.is_error else "")
+                 for t in tools]
+    if level >= 2 and any(not t.is_error for t in tools):
+        gone = sum(not t.is_error for t in tools)
+        tools = [t for t in tools if t.is_error]
+        note = f"[handoff: {gone} tool call(s) omitted]"
+    else:
+        note = ""
+    if m.role == "assistant" and level >= 3 and len(text) > ASSISTANT_TRIM_CHARS:
+        text = text[: ASSISTANT_TRIM_CHARS - 1].rstrip() + "…"
+    return replace(m, text=(text + "\n" + note).strip() if note else text, tool_calls=tools)
 
 
 def compact_session(s: Session, budget: int) -> Session:
     if s.chars <= budget:
         return s
-    msgs = list(s.messages)
+    msgs: list[Message | None] = list(s.messages)
     n = len(msgs)
     protected = set()
-    first_user = next((i for i, m in enumerate(msgs) if m.role == "user"), None)
+    first_user = next((i for i, m in enumerate(s.messages) if m.role == "user"), None)
     if first_user is not None:
         protected.add(first_user)
     protected.update(range(max(0, n - 2), n))
@@ -44,24 +58,33 @@ def compact_session(s: Session, budget: int) -> Session:
     def total() -> int:
         return sum(m.chars for m in msgs if m is not None) + sum(len(x) for x in s.summaries)
 
-    for level in (1, 2):
+    def trim(level: int, indices) -> None:
+        for i in indices:
+            if total() <= budget:
+                return
+            if msgs[i] is not None:
+                msgs[i] = _trim_message(msgs[i], level)
+
+    def drop(users: bool) -> int:
+        k = 0
         for i in range(n):
             if total() <= budget:
                 break
-            if i in protected:
-                continue
-            msgs[i] = _trim_message(msgs[i], level)
-    dropped = 0
-    i = 0
-    while total() > budget and i < n:
-        if i not in protected:
-            msgs[i] = None  # type: ignore[call-overload]
-            dropped += 1
-        i += 1
+            m = msgs[i]
+            if i not in protected and m is not None and (m.role == "user") == users:
+                msgs[i] = None
+                k += 1
+        return k
+
+    # Each step costs the recipient less than the next one.
+    unprotected = [i for i in range(n) if i not in protected]
+    trim(1, range(n))  # clip tool lines everywhere
+    trim(2, unprotected)  # drop successful tool calls
+    trim(3, unprotected)  # shorten assistant prose
+    dropped = drop(users=False)
+    trim(2, sorted(protected))
+    dropped += drop(users=True)
     out = [m for m in msgs if m is not None]
-    # Protected messages may still be over budget; trim their tool detail as a last resort.
-    if sum(m.chars for m in out) > budget:
-        out = [_trim_message(m, 2) if m.role == "assistant" else m for m in out]
     new = replace(s, messages=out, truncated=True)
     if dropped:
         new.summaries = [f"[handoff: {dropped} earlier message(s) dropped to fit budget]"] + list(
