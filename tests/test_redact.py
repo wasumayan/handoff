@@ -87,3 +87,16 @@ def test_long_values_redacted_quickly():
     t0 = time.perf_counter()
     out, n = redact("API_KEY=" + "a(" * 50_000)
     assert n == 1 and time.perf_counter() - t0 < 1
+
+
+def test_skips_are_narrow():
+    for text, secret in [
+        ("PASSWORD=pa|ss|word123", "pa|ss|word123"),
+        ("SECRET=abc]*xyz99876", "abc]*xyz99876"),
+        ("API_TOKEN=12345678901", "12345678901"),
+        ('"auth_token": 987654321012', "987654321012"),
+        ("SECRET=[REDACTED:env]leftover-Secret9", "leftover-Secret9"),
+        ("password=Pass(word)123", "Pass(word)123"),
+    ]:
+        out, n = redact(text)
+        assert secret not in out and n >= 1, text

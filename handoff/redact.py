@@ -41,12 +41,17 @@ SHAPE_CHECK_CHARS = 256  # NOT_SECRET is quadratic; long values are redacted unc
 NOT_SECRET = re.compile(
     r"(?:~?/|\./)\S*"  # a path
     r"|\$\{?[A-Z_][A-Z0-9_]*\}?[,;)\]}]*"  # a bare $ENV_VAR reference (upper case: not $ecret)
-    r"|[\w.]+\(.*\).*|[\w.]+\[.*\].*"  # code: a call or subscript, closed (`set[str],`)
-    r"|.*(?:\]\{\d|\][*+?]|\|\w+\|).*"  # a regex fragment (`[A-Za-z]{24,}`, `|secret|key|`)
-    r"|\[REDACTED:\w+\].*"  # already redacted by a pattern above
+    r"|[\w.]+\(.*\)[,;)\]}]*|[\w.]+\[.*\][,;)\]}]*"  # a call or subscript ending the value
+    # regex syntax: a ranged character class with a quantifier (`[A-Za-z0-9._-]{24,})`), or a
+    # parenthesized alternation of 3+ words (`|secret|key|token)/`)
+    r"|.*\[[^\]]*\w-\w[^\]]*\](?:[*+?]|\{\d).*"
+    r"|[(|]?\w+(?:\|\w+){2,}\)[/']*"
+    r"|\[REDACTED:\w+\][,;)\]}]*"  # exactly a tag left by a pattern above
 )
-# max_tokens=20000000, "cached_tokens": 123456789, or a count clipped by the parser ("101524,…")
+# max_tokens=20000000, "cached_tokens": 123456789, or a count clipped by the parser ("101524,…").
+# Only counter-named keys (plural *tokens, *token_count); a singular *_TOKEN is always redacted.
 TOKEN_COUNT = re.compile(r"\d[\d_.,]*[,;)\]}…]*")
+COUNTER_KEY = re.compile(r"(?i)\w*tokens|\w*token_count")
 
 
 def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
@@ -54,7 +59,7 @@ def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
     if (
         len(value) < MIN_SECRET_CHARS
         or (len(value) <= SHAPE_CHECK_CHARS and NOT_SECRET.fullmatch(value))
-        or ("TOKEN" in key.upper() and TOKEN_COUNT.fullmatch(value))
+        or (COUNTER_KEY.fullmatch(re.findall(r"\w+", key)[-1]) and TOKEN_COUNT.fullmatch(value))
     ):
         return m.group(0), False
     return f"{key}{quote}[REDACTED:env]", True
