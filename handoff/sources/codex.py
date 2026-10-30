@@ -1,18 +1,21 @@
 """Codex CLI on-disk state.
 
-Expected layout (Codex CLI 0.2x+; verify on a real machine, formats are not stable):
+Layout (verified against Codex CLI 0.142-0.146 sessions; formats are not stable):
 
     ~/.codex/AGENTS.md                                    user-level instructions
     ~/.codex/config.toml                                  not read: plugins, MCP env, paths
     ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl one record per line
     <repo>/AGENTS.md (+ parent dirs)                      project instructions
 
-Session record shapes seen in the wild, all handled:
-    {"type":"session_meta","payload":{"id":..,"cwd":..,"cli_version":..}}
+Session record shapes handled:
+    {"type":"session_meta","payload":{"id":..,"cwd":..,"cli_version":..,"thread_source":"user"|"subagent"}}
     {"type":"response_item","payload":{"type":"message","role":"user"|"assistant","content":[{"type":"input_text"|"output_text","text":..}]}}
-    {"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{...json...}","call_id":..}}
-    {"type":"response_item","payload":{"type":"function_call_output","call_id":..,"output":"..."}}
-    {"type":"event_msg","payload":{"type":"agent_message"|"user_message","message":..}}
+    {"type":"event_msg","payload":{"type":"agent_message"|"user_message","message":..}}  (a second copy of each turn)
+    {"type":"response_item","payload":{"type":"function_call","name":"shell"|"exec_command"|"wait",..,"call_id":..}}
+    {"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch"|"exec","input":"<patch or JS>",..}}
+    {"type":"response_item","payload":{"type":"function_call_output"|"custom_tool_call_output","call_id":..,"output":..}}
+        output: plain text with a harness header (Exit code / Process exited with code / Script ...),
+        JSON-encoded input_text blocks, or {"output":..,"metadata":{"exit_code":..}}
     older: top-level {"id":..,"timestamp":..,"instructions":..,"cwd":..} on line 1, then items
            {"type":"message","role":..,"content":[..]} / {"type":"function_call",..}
 Unknown record types are ignored.

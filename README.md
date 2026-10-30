@@ -96,10 +96,13 @@ HANDOFF.md   all of the above, next.md first
 
 ## Evaluation
 
-See `eval/README.md`. Three fixture scenarios, each handed off at a midpoint, continued by the
-recipient under three arms (raw transcript, `--no-llm` structured dump, model-adapted), scored by
-hidden tests plus a short rubric. Small n; it is a smoke test for "is adaptation worth it", not a
-benchmark.
+See `eval/README.md`. Five synthetic scenarios, each stopped at a midpoint of a session (Claude Code
+and Codex formats). Each hides facts, a user correction and a dead end that exist only in that
+session. A recipient agent (Claude Code, Codex, or a stand-in) continues under each handoff variant:
+none, raw transcript, ideal, `--no-llm` at several budgets, an older version of the tool, or
+model-adapted. Measured: hidden tests (first try and after nudges), nudges and questions (manual
+input), rule compliance, repeated dead ends, tokens, peak context, time, and cost. A model-free score
+covers handoff size and recall. Small n: read it as a comparison between variants, not as a benchmark.
 
 ## Formats this depends on
 
@@ -110,8 +113,11 @@ These are not public APIs and drift between releases.
   `tool_use`, `tool_result`). `isSidechain` marks subagent transcripts, `isMeta` harness-injected
   turns, `isCompactSummary` Claude's own compaction notes. Verified against 2.1.x.
 - Codex CLI: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta` /
-  `response_item` / `event_msg` records, plus an older flat shape. Written from documentation and
-  examples, not yet verified against a live install. Unknown record types are ignored.
+  `response_item` / `event_msg` records, plus an older flat shape. Verified against real 0.142-0.146
+  sessions: every turn is written twice (response_item and event_msg); tool calls are
+  `function_call` (`shell`, `exec_command`, `wait`) or `custom_tool_call` (`apply_patch`, the
+  JavaScript `exec` tool); sub-agent threads (`thread_source: "subagent"`) are skipped. Unknown
+  record types are ignored.
 - Cursor: rules files only. Chat history is in an undocumented SQLite schema and is not read.
 
 ## Not in scope

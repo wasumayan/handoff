@@ -73,23 +73,21 @@ diff <(sed -n '/# Where things stand/,/# What changed/p' /tmp/project-handoff/HA
 Only `next.md` differs between the two runs by design. Judge it: does it say anything the
 deterministic dump did not, and is all of it supported by the transcript?
 
-## 4. Eval (laptop, API backend)
+## 4. Eval
+
+See `eval/README.md` for setup, keys and what each metric means. In short:
 
 ```bash
-cd ~/path/to/handoff
-python eval/run.py --recipient fake                          # self-check, no model, ~5 s
-python eval/run.py --recipient agent --runs 3 --judge        # stand-in agent + judge via HANDOFF_*
-# with Codex installed:
-python eval/run.py --recipient "cmd:codex exec --full-auto 'Continue the task in AGENTS.md'" --runs 3 --judge
+uv run python eval/run.py doctor --live                       # prerequisites, one tiny call per CLI
+uv run python eval/run.py score                               # handoff content per variant, no model
+uv run python eval/run.py run --agent claude --scenarios 01 --variants dump --out eval/out/try
+uv run python eval/run.py run --agent claude --runs 3 --out eval/out/claude
+uv run python eval/run.py run --agent codex  --runs 3 --out eval/out/codex
 ```
-
-Results: `eval/out/<timestamp>/results.md`. The number that matters is `pass` per arm, then
-`prefs ok`. Arm C costs one extra model call per handoff; if it does not move `pass` or `prefs`
-relative to B, say so in the README.
 
 ## 5. Serving a local backend (optional)
 
-Use this when you want arm C and the stand-in agent to run against an open model. Run vLLM's
+Use this when you want the `adapted` variant and the stand-in agent to run against an open model. Run vLLM's
 OpenAI-compatible server on any machine with a GPU (a 7B-14B instruct model in bf16 fits one 80 GB
 GPU), tunnel the port to your laptop, and point `HANDOFF_BASE_URL` at it. `handoff` itself still
 runs on the laptop.
@@ -112,5 +110,5 @@ allocation, not on the login node, and download weights where the compute nodes 
 
 ## 6. Report back
 
-Paste: `handoff sources -v` output, the stderr of the first `create`, and anything in `session.md`
-that looks wrong. If Codex data exists, the `head -3` of one session file. Then the eval table.
+Paste the `handoff sources -v` output, the stderr of the first `create`, and anything in
+`session.md` that looks wrong. Then the eval tables from `results.md`.
