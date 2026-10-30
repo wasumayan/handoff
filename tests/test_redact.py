@@ -166,3 +166,9 @@ def test_url_password_with_reserved_characters():
                     ("redis://:plain99@cache:6379", "plain99")]:
         out, n = redact(url)
         assert n == 1 and pw not in out and "[REDACTED:url_password]@" in out, url
+
+
+def test_url_password_scan_is_bounded():
+    t0 = time.perf_counter()
+    redact("://u:" * 50_000 + "@host")
+    assert time.perf_counter() - t0 < 1
