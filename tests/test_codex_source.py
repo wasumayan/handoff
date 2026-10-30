@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from handoff.sources.codex import CodexSource
@@ -32,3 +34,21 @@ def test_cwd_matches_across_case_on_case_insensitive_fs(project, codex_home):
     if not other_case.exists():
         pytest.skip("filesystem is case-sensitive")
     assert len(CodexSource(codex_home).session_paths(str(other_case))) == 1
+
+
+SESSIONS = Path(__file__).parent / "fixtures" / "codex_sessions"
+
+
+def test_messages_written_twice_are_kept_once():
+    """Codex 0.14x writes every turn as a response_item message and an event_msg copy. Human
+    turns come response_item first; assistant turns come event_msg first (real 0.146.1 order)."""
+    s = CodexSource().read_session(SESSIONS / "v0146.jsonl")
+    assert [m.role for m in s.messages] == ["user", "assistant", "user", "assistant"]
+    assert s.messages[0].text == "Build the release artifacts."
+    assert s.messages[1].text == ("The config file exists. Running a 3-step smoke build.\n"
+                                  "Smoke build done in 4.2 s; the patch failed, retrying.")
+    assert s.messages[3].text == "Stopping it now.\nServer abc is stopped."
+    s = CodexSource().read_session(SESSIONS / "v0144.jsonl")
+    assert [(m.role, m.text) for m in s.messages] == [
+        ("user", "Add the changelog entry."), ("assistant", "Added docs/CHANGELOG.md.")]
+

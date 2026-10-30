@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 from ..model import Doc, Message, Session, ToolCall
@@ -80,6 +81,24 @@ def _same_dir(recorded: str, want: Path) -> bool:
         return os.path.samefile(recorded, want)
     except OSError:
         return False
+
+
+class _Copies:
+    """Codex writes each turn twice: a response_item message and an event_msg copy, in either
+    order (0.146: human turns item-first, assistant turns event-first). A copy cancels one
+    unmatched copy from the other stream, so a human repeating themselves is still kept."""
+
+    def __init__(self) -> None:
+        self.open = {"item": Counter(), "event": Counter()}
+
+    def first(self, origin: str, role: str, text: str) -> bool:
+        key = (role, text)
+        other = self.open["event" if origin == "item" else "item"]
+        if other[key]:
+            other[key] -= 1
+            return False
+        self.open[origin][key] += 1
+        return True
 
 
 def _is_injected(text: str) -> bool:
@@ -161,6 +180,7 @@ class CodexSource(Source):
     def read_session(self, path: Path) -> Session:
         s = Session(id=path.stem, source=self.name, path=str(path))
         pending: dict[str, ToolCall] = {}
+        copies = _Copies()
         with path.open(errors="replace") as fh:
             for line in fh:
                 line = line.strip()
@@ -184,7 +204,8 @@ class CodexSource(Source):
                     text = _content_text(payload.get("content")).strip()
                     if not text or (payload["role"] == "user" and _is_injected(text)):
                         continue
-                    self._add(s, payload["role"], text, ts)
+                    if copies.first("item", payload["role"], text):
+                        self._add(s, payload["role"], text, ts)
                 elif ptype == "function_call":
                     tc = ToolCall(name=str(payload.get("name", "tool")),
                                   input_summary=_args_summary(payload.get("arguments")))
@@ -207,7 +228,9 @@ class CodexSource(Source):
                 elif ptype in ("agent_message", "user_message") and isinstance(payload.get("message"), str):
                     role = "assistant" if ptype == "agent_message" else "user"
                     text = payload["message"].strip()
-                    if text and not (s.messages and s.messages[-1].text == text):
+                    if text and not (role == "user" and _is_injected(text)) and copies.first(
+                        "event", role, text
+                    ):
                         self._add(s, role, text, ts)
                 elif ptype == "compacted" or ptype == "summary":
                     txt = payload.get("message") or payload.get("summary") or ""
