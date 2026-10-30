@@ -5,8 +5,12 @@ from __future__ import annotations
 import re
 
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # No \b on prefixes: keys appear right after JSON-escaped "\n" and URL-encoded "%3D".
     ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}")),
-    ("openai", re.compile(r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}")),
+    # Real key structure, so "Task-specific-retry-..." in prose is not a key.
+    ("openai", re.compile(r"sk-(?:proj|svcacct|admin|None)-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{32,}")),
+    ("huggingface", re.compile(r"hf_[A-Za-z0-9]{30,}")),
+    ("runpod", re.compile(r"rpa_[A-Za-z0-9]{30,}")),
     ("github", re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}")),
     ("github_pat", re.compile(r"github_pat_[A-Za-z0-9_]{30,}")),
     ("aws_access", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -16,9 +20,13 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
 ]
-# KEY=value lines where KEY smells secret and value is long enough to be one.
+# key=value / key: value where the key smells secret and the value is long enough to be one,
+# anywhere in a line (`cd x && HF_TOKEN=... cmd`, `"api_key": "..."`). Errs toward redacting: a
+# miss leaks a key, a false positive loses a few chars. Only values that are clearly not secrets
+# are skipped: LLM token counts (`max_tokens`), paths, regexes and code (`token=next((...`). The
+# value stops at a backslash, so an escaped `UNSET\n...` is too short to match.
 ENV_LINE = re.compile(
-    r"(?im)^(\s*(?:export\s+)?[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*\s*[=:]\s*)(['\"]?)([^\s'\"]{8,})(\2)"
+    r"(?i)((?<![A-Za-z0-9_])(?:export\s+)?[A-Z0-9_]*(?:SECRET|TOKEN(?!S|_COUNT)|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*['\"]?\s*[=:]\s*)(['\"]?)(?![/~.\[|<{($]|\w+[\[(])([^\s'\"\\]{8,})"
 )
 
 
@@ -28,7 +36,7 @@ def redact(text: str) -> tuple[str, int]:
     for tag, pat in PATTERNS:
         text, n = pat.subn(f"[REDACTED:{tag}]", text)
         count += n
-    text, n = ENV_LINE.subn(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED:env]{m.group(4)}", text)
+    text, n = ENV_LINE.subn(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED:env]", text)
     count += n
     return text, count
 
