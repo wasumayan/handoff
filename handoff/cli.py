@@ -112,15 +112,18 @@ def cmd_create(a: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (out_dir / name).write_text(content)
+    # --out outside the project means "do not touch the project": no latest link, no state.json.
+    in_project = out_dir.resolve().is_relative_to(Path(cwd).resolve())
     latest = Path(cwd) / ".handoff" / "latest"
-    try:
-        latest.parent.mkdir(parents=True, exist_ok=True)
-        if latest.is_symlink() or latest.exists():
-            latest.unlink()
-        target = out_dir.name if out_dir.parent.resolve() == latest.parent.resolve() else out_dir.resolve()
-        latest.symlink_to(target)
-    except OSError:
-        pass
+    if in_project:
+        try:
+            latest.parent.mkdir(parents=True, exist_ok=True)
+            if latest.is_symlink() or latest.exists():
+                latest.unlink()
+            target = out_dir.name if out_dir.parent.resolve() == latest.parent.resolve() else out_dir.resolve()
+            latest.symlink_to(target)
+        except OSError:
+            pass
     _log(f"wrote {out_dir}/HANDOFF.md ({len(files['HANDOFF.md']):,} chars)")
 
     if a.install:
@@ -129,6 +132,9 @@ def cmd_create(a: argparse.Namespace) -> int:
     if a.stdout:
         print(files["HANDOFF.md"])
 
+    if not in_project:
+        _log("output is outside the project; .handoff/state.json not updated (next delta unchanged)")
+        return 0
     newest = bundle.sessions[0] if bundle.sessions else None
     state.record(
         cwd, rcp.name,

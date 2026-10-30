@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 from ..model import Delta
 
+# `git status` otherwise refreshes .git/index; reading a repo must not write to it.
+_ENV = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
 
 def _git(cwd: str, *args: str, max_chars: int = 20_000) -> str:
     try:
         r = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20, check=False
+            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20, check=False,
+            env=_ENV,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""

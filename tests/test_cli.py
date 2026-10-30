@@ -48,6 +48,19 @@ def test_dry_run_writes_nothing(project, claude_home, capsys):
     assert not (project / ".handoff").exists()
 
 
+def test_out_outside_project_writes_nothing_into_project(project, claude_home, tmp_path):
+    def snapshot():
+        return {(str(p.relative_to(project)), p.stat().st_mtime_ns)
+                for p in project.rglob("*") if p.is_file()}
+
+    before = snapshot()
+    out = tmp_path / "elsewhere"
+    assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--out", str(out)]) == 0
+    assert (out / "HANDOFF.md").is_file()
+    assert not (project / ".handoff").exists()
+    assert snapshot() == before  # includes .git/index
+
+
 def test_budget_applies(project, claude_home):
     out = project / "o"
     assert main(["create", "--to", "cursor", "--path", str(project), "--no-llm", "--out", str(out),
