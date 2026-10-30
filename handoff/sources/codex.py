@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -56,6 +57,76 @@ def _args_summary(args: object) -> str:
                 return _clip(args[k], TOOL_INPUT_CHARS)
         return _clip(json.dumps(args, ensure_ascii=False), TOOL_INPUT_CHARS)
     return _clip(str(args), TOOL_INPUT_CHARS)
+
+
+_JS_CMD = re.compile(r'\bcmd\s*:\s*("(?:[^"\\]|\\.)*"|`[^`]*`)')
+_PATCH_FILE = re.compile(r"\*\*\* (?:Update|Add|Delete) File: ([^\n\\]+)")
+_OUTPUT_HEADER = re.compile(
+    r"(Chunk ID|Wall time|Process exited with code|Original token count|Exit code|"
+    r"Script (?:completed|failed|error|terminated|running with cell ID))\b.*|Output:|"
+)
+_SCRIPT_ERRORS = ("Script failed", "Script error", "Script terminated")
+_EXIT = re.compile(r"(?:Process exited with code|Exit code:)\s*(-?\d+)")
+
+
+def _custom_input_summary(name: str, inp: object) -> str:
+    """Summarize a custom tool call: raw patch text (apply_patch) or JS code (0.146 `exec`)."""
+    if not isinstance(inp, str):
+        return _args_summary(inp)
+    parts = []
+    for m in _JS_CMD.finditer(inp):
+        lit = m.group(1)
+        try:
+            parts.append(json.loads(lit) if lit.startswith('"') else lit[1:-1])
+        except json.JSONDecodeError:
+            parts.append(lit[1:-1])
+    files = _PATCH_FILE.findall(inp)
+    if files:
+        parts.append("apply_patch " + ", ".join(f.strip() for f in files))
+    if not parts:
+        tools = sorted(set(re.findall(r"\btools\.(\w+)", inp)))
+        parts = [", ".join(tools)] if tools else [inp.strip().split("\n", 1)[0]]
+    return _clip(" ; ".join(parts), TOOL_INPUT_CHARS)
+
+
+def _wait_cell(args: object) -> str:
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return ""
+    return str(args.get("cell_id", "")) if isinstance(args, dict) else ""
+
+
+def _tool_output(raw: object) -> tuple[str, bool, str]:
+    """Return (body, is_error, running_cell_id) for a tool output in any Codex version's shape:
+    plain text with a harness header, JSON-encoded input_text blocks, or {"output", "metadata"}."""
+    exit_code = None
+    if isinstance(raw, str) and raw[:1] in "[{":
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    if isinstance(raw, dict):
+        meta = raw.get("metadata")
+        if isinstance(meta, dict) and isinstance(meta.get("exit_code"), int):
+            exit_code = meta["exit_code"]
+        raw = raw["output"] if isinstance(raw.get("output"), str) else json.dumps(raw)
+    text = _content_text(raw) if isinstance(raw, list) else str(raw or "")
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and _OUTPUT_HEADER.fullmatch(lines[i].strip()):
+        i += 1
+    header, body = "\n".join(lines[:i]), "\n".join(lines[i:]).strip()
+    m = _EXIT.search(header)
+    if m:
+        exit_code = int(m.group(1))
+    running = re.match(r"Script running with cell ID (\S+)", text)
+    if exit_code is not None or text.startswith("Script "):
+        is_err = text.startswith(_SCRIPT_ERRORS) or bool(exit_code)
+    else:  # headerless legacy output: fall back to keywords
+        is_err = any(k in text[:200].lower() for k in ("error", "traceback"))
+    return body, is_err, running.group(1) if running else ""
 
 
 def _content_text(content: object) -> str:
@@ -180,6 +251,7 @@ class CodexSource(Source):
     def read_session(self, path: Path) -> Session:
         s = Session(id=path.stem, source=self.name, path=str(path))
         pending: dict[str, ToolCall] = {}
+        cells: dict[str, ToolCall] = {}  # exec cell id -> the call still running in it
         copies = _Copies()
         with path.open(errors="replace") as fh:
             for line in fh:
@@ -206,23 +278,32 @@ class CodexSource(Source):
                         continue
                     if copies.first("item", payload["role"], text):
                         self._add(s, payload["role"], text, ts)
-                elif ptype == "function_call":
-                    tc = ToolCall(name=str(payload.get("name", "tool")),
-                                  input_summary=_args_summary(payload.get("arguments")))
+                elif ptype in ("function_call", "custom_tool_call"):
+                    name = str(payload.get("name", "tool"))
                     cid = payload.get("call_id")
+                    cell = _wait_cell(payload.get("arguments")) if name == "wait" else ""
+                    if cell in cells:
+                        # a poll on a running exec cell: its output belongs to that exec call
+                        if isinstance(cid, str):
+                            pending[cid] = cells[cell]
+                        continue
+                    if ptype == "custom_tool_call":
+                        summary = _custom_input_summary(name, payload.get("input"))
+                    else:
+                        summary = _args_summary(payload.get("arguments"))
+                    tc = ToolCall(name=name, input_summary=summary)
                     if isinstance(cid, str):
                         pending[cid] = tc
                     self._add_tool(s, tc, ts)
-                elif ptype == "function_call_output":
+                elif ptype in ("function_call_output", "custom_tool_call_output"):
                     cid = payload.get("call_id")
                     tc = pending.pop(cid, None) if isinstance(cid, str) else None
                     if tc is None:
                         continue
-                    out = payload.get("output")
-                    if isinstance(out, dict):
-                        out = out.get("output") or json.dumps(out)
-                    out = str(out or "")
-                    is_err = any(k in out[:200].lower() for k in ("error", "traceback", "exit code: 1"))
+                    out, is_err, running = _tool_output(payload.get("output"))
+                    if running:
+                        cells[running] = tc
+                        out = out or "(still running)"
                     tc.result_summary = _clip(out, TOOL_RESULT_ERROR_CHARS if is_err else TOOL_RESULT_CHARS)
                     tc.is_error = is_err
                 elif ptype in ("agent_message", "user_message") and isinstance(payload.get("message"), str):

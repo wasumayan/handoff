@@ -52,3 +52,28 @@ def test_messages_written_twice_are_kept_once():
     assert [(m.role, m.text) for m in s.messages] == [
         ("user", "Add the changelog entry."), ("assistant", "Added docs/CHANGELOG.md.")]
 
+
+def test_v0146_code_mode_exec():
+    """Real 0.146.1 shapes: JS `exec` custom tool calls, `wait` polls on long-running cells,
+    outputs as JSON-encoded input_text blocks."""
+    s = CodexSource().read_session(SESSIONS / "v0146.jsonl")
+    ls, build, patch = s.messages[1].tool_calls  # the two `wait` polls fold into the build call
+    assert ls.name == "exec" and ls.input_summary == "ls assets && git status --short"
+    assert ls.result_summary == "build.toml" and not ls.is_error
+    assert build.input_summary == "python build.py --steps 3"
+    assert build.result_summary == "built 3 steps in 4.2 s" and not build.is_error
+    assert patch.input_summary == "apply_patch src/build.py"
+    assert patch.is_error and "did not match" in patch.result_summary
+    assert s.messages[3].tool_calls[0].result_summary == "server abc stopped"
+    poll = s.messages[3].tool_calls[1]
+    assert poll.input_summary == "write_stdin"
+    assert poll.is_error and poll.result_summary == "exec cell 42 not found"
+
+
+def test_v0144_exec_command_and_apply_patch():
+    s = CodexSource().read_session(SESSIONS / "v0144.jsonl")
+    cat, grep, patch = s.messages[1].tool_calls
+    assert cat.is_error and cat.result_summary == "cat: missing.md: No such file or directory"
+    assert not grep.is_error  # "error" in the output of a successful command
+    assert patch.name == "apply_patch" and patch.input_summary == "apply_patch docs/CHANGELOG.md"
+    assert not patch.is_error and patch.result_summary.startswith("Success.")
