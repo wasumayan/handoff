@@ -21,6 +21,7 @@ Unknown record types are ignored.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from ..model import Doc, Message, Session, ToolCall
@@ -68,6 +69,17 @@ def _content_text(content: object) -> str:
                 out.append(b)
         return "\n".join(out)
     return ""
+
+
+def _same_dir(recorded: str, want: Path) -> bool:
+    """Path equality that holds on case-insensitive filesystems: `cd proj` into `Proj` on
+    macOS resolves to the lowercase spelling, while Codex recorded the on-disk one."""
+    if str(Path(recorded)) == str(want):
+        return True
+    try:
+        return os.path.samefile(recorded, want)
+    except OSError:
+        return False
 
 
 def _is_injected(text: str) -> bool:
@@ -133,11 +145,16 @@ class CodexSource(Source):
         d = self.root / "sessions"
         if not d.is_dir():
             return []
-        want = str(Path(cwd).resolve())
+        want = Path(cwd).resolve()
+        same: dict[str, bool] = {}  # sessions share a few dozen distinct cwds
         paths = []
         for p in d.rglob("*.jsonl"):
             scwd = self._session_cwd(p)
-            if scwd and str(Path(scwd)) == want:
+            if not scwd:
+                continue
+            if scwd not in same:
+                same[scwd] = _same_dir(scwd, want)
+            if same[scwd]:
                 paths.append(p)
         return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
 

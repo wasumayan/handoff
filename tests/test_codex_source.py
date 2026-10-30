@@ -1,3 +1,5 @@
+import pytest
+
 from handoff.sources.codex import CodexSource
 
 
@@ -23,3 +25,10 @@ def test_layers(project, codex_home):
     assert {d.path.split("/")[-1] for d in src.identity_docs()} == {"AGENTS.md", "config.toml"}
     proj = src.project_docs(str(project))
     assert len(proj) == 1 and proj[0].path.endswith("AGENTS.md")
+
+
+def test_cwd_matches_across_case_on_case_insensitive_fs(project, codex_home):
+    other_case = project.parent / project.name.upper()
+    if not other_case.exists():
+        pytest.skip("filesystem is case-sensitive")
+    assert len(CodexSource(codex_home).session_paths(str(other_case))) == 1
