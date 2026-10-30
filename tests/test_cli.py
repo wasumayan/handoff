@@ -95,3 +95,11 @@ def test_sources_and_profiles(project, claude_home, capsys):
     assert main(["profiles", "--json"]) == 0
     assert '"instruction_file": "AGENTS.md"' in capsys.readouterr().out
     Path(project)  # silence unused
+
+
+def test_keep_pii_flag(project, claude_home, capsys):
+    (project / "CLAUDE.md").write_text("# Project rules\nEscalate to lead@corp.example.com.\n")
+    assert main(["create", "--to", "codex", "--path", str(project), "--dry-run"]) == 0
+    assert "lead@corp.example.com" not in capsys.readouterr().out
+    assert main(["create", "--to", "codex", "--path", str(project), "--dry-run", "--keep-pii"]) == 0
+    assert "lead@corp.example.com" in capsys.readouterr().out

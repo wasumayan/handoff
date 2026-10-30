@@ -100,3 +100,61 @@ def test_skips_are_narrow():
     ]:
         out, n = redact(text)
         assert secret not in out and n >= 1, text
+
+
+def test_more_credential_formats():
+    secrets = {
+        "postgres://app:Hunter2pass@db.internal:5432/x": "Hunter2pass",
+        "redis://:s3cretRedis99@cache:6379": "s3cretRedis99",
+        "stripe sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc": "4eC39HqLyjWDarjtT1zdp7dc",
+        "whsec_" + "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw": "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+        "client_secret GOCSPX-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3": "a1B2c3D4e5F6g7H8i9J0k1L2m3",
+        "ya29." + "a0AfH6SMBx1y2z3A4b5C6d7E8f9G0h": "a0AfH6SMBx1y2z3A4b5C6d7E8f9G0h",
+        "glpat-" + "xYz12AbC34dEf56GhI78jK": "xYz12AbC34dEf56GhI78jK",
+        "npm_" + "a" * 18 + "B" * 18: "a" * 18 + "B" * 18,
+        "SG." + "A" * 22 + "." + "b" * 43: "b" * 43,
+        "https://hooks.slack.com/services/T000/B000/XXXXsecretXXXX": "XXXXsecretXXXX",
+        "https://discord.com/api/webhooks/123456/abcDEF_secret-token": "abcDEF_secret-token",
+        "gsk_" + "Q" * 44: "Q" * 44,
+        "xai-" + "R" * 44: "R" * 44,
+        "r8_" + "S" * 37: "S" * 37,
+        "curl -H 'Authorization: Basic dXNlcjpwYXNzd29yZA=='": "dXNlcjpwYXNzd29yZA==",
+        "curl -H 'Cookie: session=abc123def456; csrftoken=zzz999'": "abc123def456",
+    }
+    for text, secret in secrets.items():
+        out, n = redact(text)
+        assert secret not in out and n >= 1, text
+    assert redact("postgres://app:Hunter2pass@db/x")[0] == "postgres://app:[REDACTED:url_password]@db/x"
+
+
+def test_personal_data_and_home_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "alice"))
+    text = (f"cd {tmp_path}/alice/Documents/proj && mail jane.doe+vc@fund.example.com "
+            "or call (609) 555-0123 / +1 609-555-0199")
+    out, n = redact(text)
+    assert "jane.doe" not in out and "555-0123" not in out and "555-0199" not in out
+    assert "cd ~/Documents/proj" in out and str(tmp_path) not in out
+    assert n == 3  # the home path is normalized, not counted
+    kept, _ = redact(text, pii=False)
+    assert "jane.doe+vc@fund.example.com" in kept and "(609) 555-0123" in kept
+    for s in ["git clone git@github.com:o/r.git", "Co-Authored-By: X <noreply@anthropic.com>",
+              "2026-10-30T19:14:16Z somepkg-6.0.1.0-cp312", "port 8000, pid 12345, 3.14159",
+              "defaults:\n  - env/maze_small@env.train\n  - model/small@actor.model"]:
+        assert redact(s) == (s, 0), s
+
+
+def test_bundle_paths_notes_and_delta_are_scrubbed(monkeypatch, tmp_path):
+    from handoff.model import Bundle, Delta, Doc
+    from handoff.redact import redact_bundle
+
+    home = tmp_path / "alice"
+    monkeypatch.setenv("HOME", str(home))
+    b = Bundle(source="t", recipient="codex", cwd=f"{home}/proj",
+               project=[Doc(f"{home}/proj/AGENTS.md", "ping ops@corp.example.com", "t")],
+               notes=[f"read {home}/proj/x"],
+               delta=Delta(commits=["abc fix: rotate OPENAI_API_KEY=sk-proj-" + "Zz9_" * 8],
+                           status=f" M {home}/proj/a.py"))
+    redact_bundle(b)
+    assert b.cwd == "~/proj" and b.project[0].path == "~/proj/AGENTS.md"
+    assert "ops@corp" not in b.project[0].content and b.notes == ["read ~/proj/x"]
+    assert "sk-proj" not in b.delta.commits[0] and str(home) not in b.delta.status

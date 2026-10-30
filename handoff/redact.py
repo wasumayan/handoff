@@ -1,8 +1,10 @@
-"""Scrub obvious secrets before content leaves the machine or lands in a handoff file."""
+"""Scrub obvious secrets and personal data before content leaves the machine or lands in a
+handoff file."""
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 # Prefixes are unanchored where the prefix is distinctive: keys appear right after a JSON-escaped
 # "\n" or a URL-encoded "%3D".
@@ -25,7 +27,32 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
     ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_\-\.=]{20,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
+    ("stripe", re.compile(_SK_START + r"[sr]k_(?:live|test)_[A-Za-z0-9]{16,}")),
+    ("stripe_webhook", re.compile(r"whsec_[A-Za-z0-9]{24,}")),
+    ("google_oauth", re.compile(r"GOCSPX-[A-Za-z0-9_\-]{20,}|ya29\.[A-Za-z0-9_\-]{20,}")),
+    ("gitlab", re.compile(r"glpat-[A-Za-z0-9_\-]{20,}")),
+    ("npm", re.compile(r"npm_[A-Za-z0-9]{36}")),
+    ("pypi", re.compile(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,}")),
+    ("sendgrid", re.compile(r"SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}")),
+    ("slack_webhook", re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+")),
+    ("discord_webhook", re.compile(r"https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w\-]+")),
+    ("groq", re.compile(r"gsk_[A-Za-z0-9]{40,}")),
+    ("xai", re.compile(r"xai-[A-Za-z0-9]{40,}")),
+    ("replicate", re.compile(r"r8_[A-Za-z0-9]{30,}")),
+    ("digitalocean", re.compile(r"do[por]_v1_[a-f0-9]{64}")),
 ]
+# Secrets inside a larger string: keep the surrounding text so the reader can follow it.
+CONTEXT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("url_password", re.compile(r"(://[^\s/:@]*:)[^\s/@]+(@)")),  # scheme://user:PASS@host
+    ("basic_auth", re.compile(r"(?i)(\bauthorization:\s*basic\s+)[A-Za-z0-9+/=]{8,}()")),
+    ("cookie", re.compile(r"(?i)(\b(?:set-)?cookie:\s*)[^\r\n'\"]+()")),
+]
+# Personal data, on unless pii=False (`handoff create --keep-pii`). Phone numbers: North American
+# shapes with separators only, so ids, ports, dates and versions are left alone.
+# Not after "/": Hydra overrides like `env/maze_small@env.train` are config, not addresses.
+EMAIL = re.compile(r"(?<![/\w.%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+EMAIL_KEEP = re.compile(r"(?:git|noreply)@.*|.*@users\.noreply\.github\.com")
+PHONE = re.compile(r"(?<![\w.+/\-])(?:\+1[\s.\-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.\-])\d{3}[\s.\-]\d{4}(?![\w.\-])")
 # key=value / key: value where the key smells secret, anywhere in a line (`cd x && HF_TOKEN=...
 # cmd`, `"api_key": "..."`, JSON-escaped `\"api_key\": \"...\"`). Errs toward redacting: a miss
 # leaks a key, a false positive loses a few chars. The value runs to whitespace, a quote, or a
@@ -65,37 +92,77 @@ def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
     return f"{key}{quote}[REDACTED:env]", True
 
 
-def redact(text: str) -> tuple[str, int]:
-    """Return (scrubbed, count). Replacements are stable tags so the reader knows a value was there."""
+def home_to_tilde(text: str) -> str:
+    """`/Users/<name>/...` -> `~/...`: keeps paths usable without naming the user."""
+    home = str(Path.home())
+    if len(home) < 2:
+        return text
+    return re.sub(re.escape(home) + r"(?=/|\b)", "~", text)
+
+
+def redact(text: str, pii: bool = True) -> tuple[str, int]:
+    """Return (scrubbed, count). Replacements are stable tags so the reader knows a value was there.
+    With pii, also emails and phone numbers (counted) and the home path (normalized, not counted)."""
     count = 0
     for tag, pat in PATTERNS:
         text, n = pat.subn(f"[REDACTED:{tag}]", text)
         count += n
+    for tag, pat in CONTEXT_PATTERNS:
+        text, n = pat.subn(rf"\1[REDACTED:{tag}]\2", text)
+        count += n
+    if pii:
+        text, n = _sub_counting(EMAIL, _redact_email, text)
+        count += n
+        text, n = PHONE.subn("[REDACTED:phone]", text)
+        count += n
+        text = home_to_tilde(text)
+    text, n = _sub_counting(ENV_LINE, _redact_env, text)
+    return text, count + n
+
+
+def _redact_email(m: re.Match[str]) -> tuple[str, bool]:
+    if EMAIL_KEEP.fullmatch(m.group(0)):
+        return m.group(0), False
+    return "[REDACTED:email]", True
+
+
+def _sub_counting(pat: re.Pattern[str], fn, text: str) -> tuple[str, int]:
+    """re.sub with a callback returning (replacement, redacted?); counts only real redactions."""
     hits = 0
 
     def sub(m: re.Match[str]) -> str:
         nonlocal hits
-        out, hit = _redact_env(m)
+        out, hit = fn(m)
         hits += hit
         return out
 
-    text = ENV_LINE.sub(sub, text)
-    return text, count + hits
+    return pat.sub(sub, text), hits
 
 
-def redact_bundle(bundle) -> int:
-    """In-place scrub of every text field in a Bundle. Returns number of replacements."""
+def redact_bundle(bundle, pii: bool = True) -> int:
+    """In-place scrub of every text field in a Bundle, paths included. Returns the number of
+    values redacted."""
     total = 0
-    for d in bundle.identity + bundle.project:
-        d.content, n = redact(d.content)
+
+    def r(text: str) -> str:
+        nonlocal total
+        out, n = redact(text, pii)
         total += n
+        return out
+
+    bundle.cwd = r(bundle.cwd)
+    bundle.notes = [r(x) for x in bundle.notes]
+    for d in bundle.identity + bundle.project:
+        d.path, d.content = r(d.path), r(d.content)
     for s in bundle.sessions:
+        s.cwd, s.path = r(s.cwd), r(s.path)
         for m in s.messages:
-            m.text, n = redact(m.text)
-            total += n
+            m.text = r(m.text)
             for t in m.tool_calls:
-                t.input_summary, n1 = redact(t.input_summary)
-                t.result_summary, n2 = redact(t.result_summary)
-                total += n1 + n2
-        s.summaries = [redact(x)[0] for x in s.summaries]
+                t.input_summary, t.result_summary = r(t.input_summary), r(t.result_summary)
+        s.summaries = [r(x) for x in s.summaries]
+    if bundle.delta is not None:
+        d = bundle.delta
+        d.commits = [r(x) for x in d.commits]
+        d.status, d.diff_stat = r(d.status), r(d.diff_stat)
     return total

@@ -72,9 +72,10 @@ def cmd_create(a: argparse.Namespace) -> int:
     except KeyError as e:
         raise SystemExit(str(e)) from e
     bundle = build_bundle(cwd, a.source, rcp.name, sessions=a.sessions, session_id=a.session)
-    n = redact_bundle(bundle)
+    n = redact_bundle(bundle, pii=not a.keep_pii)
     if n:
-        bundle.notes.append(f"{n} secret-looking value(s) redacted")
+        what = "secret-looking" if a.keep_pii else "secret-looking or personal (email, phone)"
+        bundle.notes.append(f"{n} {what} value(s) redacted")
     budget = a.budget or rcp.profile.context_budget
     raw_chars = bundle.chars
     bundle = compact(bundle, budget)
@@ -198,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="write into the recipient's instruction file (marker block)")
     c.add_argument("--out", help="output directory (default .handoff/<ts>-<recipient>)")
     c.add_argument("--stdout", action="store_true", help="also print HANDOFF.md")
+    c.add_argument("--keep-pii", action="store_true",
+                   help="keep emails, phone numbers and the home path (secrets are always redacted)")
     c.add_argument("--dry-run", action="store_true",
                    help="print exactly what would be sent to the backend, write nothing")
     c.set_defaults(fn=cmd_create)
