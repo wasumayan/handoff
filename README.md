@@ -28,7 +28,6 @@ dump is an open question; `eval/` exists to answer it, not to assume it.
 
 ```bash
 git clone https://github.com/wasumayan/handoff && cd handoff
-git checkout claude/happy-mayer-tnvnhz
 uv sync --extra dev && uv run pytest -q          # needs Python 3.11+ and uv; all tests should pass
 
 # install the claude and codex CLIs, then:

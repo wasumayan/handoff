@@ -19,8 +19,8 @@ self-hosted GPU server is step 5.
 # uv if you do not have it
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# the tool, from the branch, into an isolated environment
-uv tool install "git+https://github.com/wasumayan/handoff@claude/happy-mayer-tnvnhz"
+# the tool, into an isolated environment
+uv tool install "git+https://github.com/wasumayan/handoff"
 handoff --version
 ```
 
@@ -28,7 +28,6 @@ To hack on it instead:
 
 ```bash
 git clone https://github.com/wasumayan/handoff && cd handoff
-git checkout claude/happy-mayer-tnvnhz
 uv venv && . .venv/bin/activate && uv pip install -e ".[dev]"
 pytest -q
 ```

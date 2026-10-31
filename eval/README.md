@@ -75,7 +75,6 @@ against `none` on the same scenario, source, agent and repeat.
 
 ```bash
 git clone https://github.com/wasumayan/handoff && cd handoff
-git checkout claude/happy-mayer-tnvnhz
 uv sync --extra dev                # Python 3.11+, installs pytest and ruff from uv.lock
 uv run pytest -q                   # everything should pass
 ```
