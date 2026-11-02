@@ -1,3 +1,5 @@
+import json
+
 from handoff.sources.claude_code import ClaudeCodeSource, project_slug
 
 
@@ -49,3 +51,42 @@ def test_tolerates_garbage(tmp_path, claude_home, project):
     p = src.session_paths(str(project))[0]
     p.write_text(p.read_text() + "not json\n{\"type\":\"user\",\"message\":\"notadict\"}\n[1,2]\n")
     assert len(src.sessions(str(project))[0].messages) == 4
+
+
+def test_message_typed_mid_turn_is_a_user_turn(project, claude_home):
+    # Shapes as Claude Code 2.1.281 writes them: the message is a queued_command attachment between
+    # tool turns, and queue-operation records repeat its text.
+    def queued(uuid, prompt, mode, **extra):
+        return {"type": "attachment", "uuid": uuid, "isSidechain": False,
+                "timestamp": "2026-11-02T20:57:46.134Z",
+                "attachment": {"type": "queued_command", "prompt": prompt, "commandMode": mode,
+                               **extra}}
+
+    records = [
+        {"type": "user", "uuid": "u1", "timestamp": "2026-11-02T20:57:00.000Z",
+         "message": {"role": "user", "content": "Survey the repos in ~."}},
+        {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls ~"}}]}},
+        {"type": "queue-operation", "operation": "enqueue", "content": "only read the handoff repo"},
+        {"type": "user", "uuid": "u2", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "handoff\nother"}]}},
+        {"type": "queue-operation", "operation": "remove", "content": "only read the handoff repo",
+         "reason": "absorbed_mid_turn"},
+        queued("q1", "only read the handoff repo", "prompt", origin={"kind": "human"},
+               humanTurn=True),
+        queued("q2", "<task-notification>done</task-notification>", "task-notification"),
+        queued("q3", '<agent-message from="x">hi</agent-message>', "prompt", isMeta=True,
+               origin={"kind": "peer"}),
+        {"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Only handoff, then."}]}},
+    ]
+    d = claude_home / "projects" / project_slug(str(project))
+    (d / "mid.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    s = ClaudeCodeSource(claude_home).sessions(str(project), session_id="mid")[0]
+    assert [(m.role, m.text) for m in s.messages] == [
+        ("user", "Survey the repos in ~."),
+        ("assistant", ""),
+        ("user", "only read the handoff repo"),
+        ("assistant", "Only handoff, then."),
+    ]
+    assert s.messages[2].uuid == "q1" and s.messages[2].timestamp.startswith("2026-11-02T20:57:46")

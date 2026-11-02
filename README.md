@@ -145,7 +145,10 @@ These are not public APIs and drift between releases.
 - Claude Code: `~/.claude/projects/<cwd with non-alphanumerics as "-">/<session>.jsonl`. Records of
   type `user` / `assistant` carry `message.content` as a string or blocks (`text`, `thinking`,
   `tool_use`, `tool_result`). `isSidechain` marks subagent transcripts, `isMeta` harness-injected
-  turns, `isCompactSummary` Claude's own compaction notes. Verified against 2.1.x.
+  turns, `isCompactSummary` Claude's own compaction notes. A message typed while the agent is
+  working is an `attachment` record of type `queued_command` with `commandMode: "prompt"`; the same
+  type also carries task notifications and messages from other agents, which are skipped. Verified
+  against 2.1.x.
 - Codex CLI: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta` /
   `response_item` / `event_msg` records, plus an older flat shape. Verified against real 0.142-0.146
   sessions: every turn is written twice (response_item and event_msg); tool calls are
