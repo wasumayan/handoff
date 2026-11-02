@@ -143,6 +143,24 @@ def test_personal_data_and_home_dir(monkeypatch, tmp_path):
         assert redact(s) == (s, 0), s
 
 
+def test_home_dir_inside_a_longer_path_is_left_alone(monkeypatch, tmp_path):
+    home = f"{tmp_path}/home/alice"  # does not exist, so it resolves to itself
+    monkeypatch.setenv("HOME", home)
+    out, _ = redact(f"ls /storage{home}/x {home}/y")
+    assert out == f"ls /storage{home}/x ~/y"  # was "/storage~/x"
+
+
+def test_symlinked_home_dir_is_rewritten_in_both_forms(monkeypatch, tmp_path):
+    # /home/me -> /storage/home/me on many clusters; Claude Code records the resolved cwd
+    real = tmp_path / "storage" / "home" / "alice"
+    real.mkdir(parents=True)
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "alice").symlink_to(real)
+    monkeypatch.setenv("HOME", str(tmp_path / "home" / "alice"))
+    out, _ = redact(f"cd {real}/proj && cat {tmp_path}/home/alice/notes")
+    assert out == "cd ~/proj && cat ~/notes"
+
+
 def test_bundle_paths_notes_and_delta_are_scrubbed(monkeypatch, tmp_path):
     from handoff.model import Bundle, Delta, Doc
     from handoff.redact import redact_bundle

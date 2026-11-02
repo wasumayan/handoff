@@ -4,6 +4,7 @@ handoff file."""
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 # Prefixes are unanchored where the prefix is distinctive: keys appear right after a JSON-escaped
@@ -116,12 +117,27 @@ def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
     return f"{key}{quote}[REDACTED:env]", True
 
 
+@lru_cache(maxsize=8)
+def _home_pattern(home: str) -> re.Pattern[str] | None:
+    """`home` as spelled and as resolved: `/home/me` may be a symlink to `/storage/home/me`, and the
+    resolved form is what cwd, slugs and the agent's own records use. Longest first, so that form
+    is replaced whole. A match must not continue a longer path: with HOME=/home/me,
+    `/srv/backup/home/me` is another directory, and rewriting it gave `/srv/backup~`."""
+    forms = {home}
+    try:
+        forms.add(str(Path(home).resolve()))
+    except (OSError, RuntimeError):  # RuntimeError: symlink loop before Python 3.13
+        pass
+    ordered = sorted((f for f in forms if len(f) >= 2), key=len, reverse=True)
+    if not ordered:
+        return None
+    return re.compile(r"(?<![\w.\-])(?:" + "|".join(map(re.escape, ordered)) + r")(?=/|\b)")
+
+
 def home_to_tilde(text: str) -> str:
     """`/Users/<name>/...` -> `~/...`: keeps paths usable without naming the user."""
-    home = str(Path.home())
-    if len(home) < 2:
-        return text
-    return re.sub(re.escape(home) + r"(?=/|\b)", "~", text)
+    pat = _home_pattern(str(Path.home()))
+    return pat.sub("~", text) if pat else text
 
 
 def redact(text: str, pii: bool = True) -> tuple[str, int]:
