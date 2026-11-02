@@ -11,8 +11,10 @@ Verified layout (Claude Code 2.1.x):
 
 Record types that carry conversation: "user" and "assistant" (field "message" with "role" and
 "content"; content is a string or a list of blocks of type text / thinking / tool_use /
-tool_result). "summary" records hold Claude Code's own compaction notes. Everything else
-(attachment, queue-operation, last-prompt, tools-used, ...) is dropped. Records with
+tool_result). A message the user types while the agent is working is not a "user" record: it
+arrives as an "attachment" of type queued_command with commandMode "prompt" (verified 2.1.281),
+and is read as a user turn. "summary" records hold Claude Code's own compaction notes. Everything
+else (other attachments, queue-operation, last-prompt, tools-used, ...) is dropped. Records with
 isSidechain=true are subagent transcripts and are dropped.
 """
 
@@ -65,6 +67,20 @@ def _text_of(content: object) -> str:
                 parts.append(b)
         return "\n".join(parts)
     return "" if content is None else str(content)
+
+
+def _queued_prompt(att: object) -> str:
+    """Text of a message the user typed while the agent was working, or "".
+
+    Background task notifications (commandMode "task-notification") and messages from other agents
+    (isMeta, origin "peer") use the same attachment type and are not human turns. The queue-operation
+    records around it carry the same text again and are ignored.
+    """
+    if not isinstance(att, dict) or att.get("type") != "queued_command":
+        return ""
+    if att.get("commandMode", "prompt") != "prompt" or att.get("isMeta"):
+        return ""
+    return _text_of(att.get("prompt")).strip()
 
 
 class ClaudeCodeSource(Source):
@@ -124,6 +140,11 @@ class ClaudeCodeSource(Source):
                     if txt:
                         s.summaries.append(txt)
                     continue
+                if rtype == "attachment":
+                    prompt = _queued_prompt(rec.get("attachment"))
+                    if not prompt:
+                        continue
+                    rtype, rec = "user", {**rec, "message": {"role": "user", "content": prompt}}
                 if rtype not in ("user", "assistant"):
                     continue
                 if rec.get("isSidechain") or rec.get("isMeta"):
