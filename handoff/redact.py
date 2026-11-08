@@ -121,8 +121,9 @@ def _redact_env(m: re.Match[str]) -> tuple[str, bool]:
 def _home_pattern(home: str) -> re.Pattern[str] | None:
     """`home` as spelled and as resolved: `/home/me` may be a symlink to `/storage/home/me`, and the
     resolved form is what cwd, slugs and the agent's own records use. Longest first, so that form
-    is replaced whole. A match must not continue a longer path: with HOME=/home/me,
-    `/srv/backup/home/me` is another directory, and rewriting it gave `/srv/backup~`."""
+    is replaced whole. No check on what precedes a match: `.../home/me` in truncated output and
+    `-I/home/me/include` must still lose the name, at the cost of `/srv/backup/home/me` becoming
+    `/srv/backup~`."""
     forms = {home}
     try:
         forms.add(str(Path(home).resolve()))
@@ -131,7 +132,7 @@ def _home_pattern(home: str) -> re.Pattern[str] | None:
     ordered = sorted((f for f in forms if len(f) >= 2), key=len, reverse=True)
     if not ordered:
         return None
-    return re.compile(r"(?<![\w.\-])(?:" + "|".join(map(re.escape, ordered)) + r")(?=/|\b)")
+    return re.compile(r"(?:" + "|".join(map(re.escape, ordered)) + r")(?=/|\b)")
 
 
 def home_to_tilde(text: str) -> str:
