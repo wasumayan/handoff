@@ -143,11 +143,11 @@ def test_personal_data_and_home_dir(monkeypatch, tmp_path):
         assert redact(s) == (s, 0), s
 
 
-def test_home_dir_inside_a_longer_path_is_left_alone(monkeypatch, tmp_path):
+def test_home_dir_glued_to_other_text_is_still_rewritten(monkeypatch, tmp_path):
     home = f"{tmp_path}/home/alice"  # does not exist, so it resolves to itself
     monkeypatch.setenv("HOME", home)
-    out, _ = redact(f"ls /storage{home}/x {home}/y")
-    assert out == f"ls /storage{home}/x ~/y"  # was "/storage~/x"
+    out, _ = redact(f"gcc -I{home}/inc; traceback .../{home}/x.py")
+    assert "alice" not in out
 
 
 def test_symlinked_home_dir_is_rewritten_in_both_forms(monkeypatch, tmp_path):
