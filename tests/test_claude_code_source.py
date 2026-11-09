@@ -90,3 +90,39 @@ def test_message_typed_mid_turn_is_a_user_turn(project, claude_home):
         ("assistant", "Only handoff, then."),
     ]
     assert s.messages[2].uuid == "q1" and s.messages[2].timestamp.startswith("2026-11-02T20:57:46")
+
+
+def test_compacted_history_is_replaced_by_its_summary(project, claude_home):
+    # Shapes as Claude Code 2.1.319 writes them: the boundary lists the recent records it kept
+    def rec(t, uuid, content):
+        return {"type": t, "uuid": uuid, "message": {"role": t, "content": content}}
+
+    def boundary(kept):
+        meta = {"trigger": "auto", "preservedMessages": {"uuids": kept}} if kept is not None else {}
+        return {"type": "system", "subtype": "compact_boundary", "compactMetadata": meta}
+
+    records = [
+        rec("user", "u1", "build the importer"),
+        rec("assistant", "a1", "explored for an hour " + "x" * 500),
+        rec("user", "u2", "never touch the fixtures"),
+        rec("assistant", "a2", "more exploration"),
+        rec("assistant", "a3", "the parser is the culprit"),  # merged into a2's message, but kept
+        rec("user", "u3", "ok, fix it"),
+        boundary(["a3", "u3"]),
+        {"type": "user", "uuid": "s1", "isCompactSummary": True,
+         "message": {"role": "user", "content": "Summary: importer half done."}},
+        rec("assistant", "a4", "fixing the parser now"),
+    ]
+    d = claude_home / "projects" / project_slug(str(project))
+    (d / "cmp.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    s = ClaudeCodeSource(claude_home).sessions(str(project), session_id="cmp")[0]
+    assert [m.text for m in s.messages] == [
+        "build the importer", "never touch the fixtures",
+        "more exploration\nthe parser is the culprit", "ok, fix it", "fixing the parser now"]
+    assert s.summaries == ["Summary: importer half done."]
+
+    # Older versions write no preservedMessages: the summary replaces every assistant turn before it
+    (d / "old.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        rec("user", "u1", "go"), rec("assistant", "a1", "went"), boundary(None), rec("user", "u2", "?")]))
+    s = ClaudeCodeSource(claude_home).sessions(str(project), session_id="old")[0]
+    assert [m.text for m in s.messages] == ["go", "?"]

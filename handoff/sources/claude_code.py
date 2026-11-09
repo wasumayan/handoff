@@ -13,8 +13,10 @@ Record types that carry conversation: "user" and "assistant" (field "message" wi
 "content"; content is a string or a list of blocks of type text / thinking / tool_use /
 tool_result). A message the user types while the agent is working is not a "user" record: it
 arrives as an "attachment" of type queued_command with commandMode "prompt" (verified 2.1.281),
-and is read as a user turn. "summary" records hold Claude Code's own compaction notes. Everything
-else (other attachments, queue-operation, last-prompt, tools-used, ...) is dropped. Records with
+and is read as a user turn. "summary" records hold Claude Code's own compaction notes. A "system"
+record with subtype compact_boundary marks where Claude Code compacted its context; the
+isCompactSummary record after it replaces the assistant turns before it. Everything else (other
+attachments, queue-operation, last-prompt, tools-used, ...) is dropped. Records with
 isSidechain=true are subagent transcripts and are dropped.
 """
 
@@ -83,6 +85,17 @@ def _queued_prompt(att: object) -> str:
     return _text_of(att.get("prompt")).strip()
 
 
+def _drop_compacted(s: Session, boundary: dict, where: dict[str, int]) -> None:
+    """Claude Code compacted its context here. The summary record that follows replaces the
+    assistant turns before this point, except the recent messages it kept (`preservedMessages`;
+    absent in older versions, where it kept none). Human turns stay: they are short, and they carry
+    the corrections a summary tends to lose. Codex keeps them verbatim in its own compaction too."""
+    meta = boundary.get("compactMetadata") or {}
+    kept = [where[u] for u in (meta.get("preservedMessages") or {}).get("uuids") or [] if u in where]
+    start = min(kept, default=len(s.messages))
+    s.messages = [m for i, m in enumerate(s.messages) if i >= start or m.role == "user"]
+
+
 class ClaudeCodeSource(Source):
     name = "claude_code"
     display = "Claude Code"
@@ -123,6 +136,7 @@ class ClaudeCodeSource(Source):
     def read_session(self, path: Path) -> Session:
         s = Session(id=path.stem, source=self.name, path=str(path))
         pending_tools: dict[str, ToolCall] = {}
+        where: dict[str, int] = {}  # record uuid -> index of the message it went into
         with path.open(errors="replace") as fh:
             for line in fh:
                 line = line.strip()
@@ -145,6 +159,10 @@ class ClaudeCodeSource(Source):
                     if not prompt:
                         continue
                     rtype, rec = "user", {**rec, "message": {"role": "user", "content": prompt}}
+                if rtype == "system" and rec.get("subtype") == "compact_boundary":
+                    _drop_compacted(s, rec, where)
+                    where = {}
+                    continue
                 if rtype not in ("user", "assistant"):
                     continue
                 if rec.get("isSidechain") or rec.get("isMeta"):
@@ -166,6 +184,8 @@ class ClaudeCodeSource(Source):
                     s.started = s.started or ts
                     s.ended = ts
                 self._ingest(s, msg, rtype, ts, str(rec.get("uuid", "")), pending_tools)
+                if s.messages and rec.get("uuid"):
+                    where[str(rec["uuid"])] = len(s.messages) - 1
         return s
 
     def _ingest(
