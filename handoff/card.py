@@ -51,6 +51,8 @@ def build(s: Session | None, with_user: bool = True) -> str:
     if files:
         out.append("**Files edited:** " + ", ".join(f"`{f}`" for f in files[:15])
                    + (f" (+{len(files) - 15} more)" if len(files) > 15 else ""))
+    elif calls:  # said outright: a summary that implies otherwise is wrong
+        out.append("**Files edited:** none in this session")
     tests = [t for t in calls if t.name in SHELL_TOOLS and TEST_RE.search(t.input_summary)]
     if tests:
         t = tests[-1]

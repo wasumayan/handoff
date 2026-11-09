@@ -50,7 +50,9 @@ Rules:
 
 def user_content(bundle: Bundle, profile: Profile) -> str:
     files = render_layers(bundle, None, profile)
-    parts = [
+    facts = ("## Facts copied from the session log (authoritative: do not contradict them)\n\n"
+             + bundle.card) if bundle.card else ""
+    parts = [*([facts] if facts else []),
         "## Identity layer (user-level instruction files)\n\n" + files["identity.md"],
         "## Project layer\n\n" + files["project.md"],
         "## Delta\n\n" + files["delta.md"],
