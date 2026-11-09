@@ -48,14 +48,16 @@ def splice_block(existing: str, block: str, header: str = "") -> str:
 
 class Recipient:
     name: str = "base"
+    brief: bool = False  # install only next.md and delta.md, pointing at the rest on disk
 
     def __init__(self) -> None:
         self.profile = load_profile(self.name)
 
-    def render(self, bundle: Bundle, composed: Composed | None) -> dict[str, str]:
+    def render(self, bundle: Bundle, composed: Composed | None,
+               layers_dir: str = ".handoff/latest") -> dict[str, str]:
         """Return {filename: content}; must include HANDOFF.md."""
-        self._last = (bundle, composed)
-        return render_layers(bundle, composed, self.profile)
+        self._last = (bundle, composed, layers_dir)
+        return render_layers(bundle, composed, self.profile, layers_dir=layers_dir)
 
     def install_path(self, cwd: str) -> Path:
         return Path(cwd) / self.profile.instruction_file
@@ -63,11 +65,14 @@ class Recipient:
     def install_block(self, files: dict[str, str]) -> str:
         """What goes into the instruction file. Files the recipient reads natively (its own
         CLAUDE.md / AGENTS.md) are elided to a reference so they are not duplicated into themselves."""
+        if self.brief and "BRIEF.md" in files:
+            return files["BRIEF.md"]
         last = getattr(self, "_last", None)
         if last is None or not self.profile.native_docs:
             return files["HANDOFF.md"]
-        bundle, composed = last
-        return render_layers(bundle, composed, self.profile, elide=self.profile.native_docs)["HANDOFF.md"]
+        bundle, composed, layers_dir = last
+        return render_layers(bundle, composed, self.profile, elide=self.profile.native_docs,
+                             layers_dir=layers_dir)["HANDOFF.md"]
 
     def install(self, cwd: str, files: dict[str, str]) -> Path:
         path = self.install_path(cwd)

@@ -90,6 +90,9 @@ def delta_md(bundle: Bundle) -> str:
 
 
 def next_md(composed: Composed | None, bundle: Bundle) -> str:
+    card = f"## From the session log\n\n{bundle.card}" if bundle.card else ""
+    if composed is None and card:
+        return "_Generated without a model (`--no-llm`): copied from the session log._\n\n" + card
     if composed is None:
         last = ""
         for s in bundle.sessions[:1]:
@@ -113,12 +116,14 @@ def next_md(composed: Composed | None, bundle: Bundle) -> str:
             else "## Next steps\n\n_not provided_",
             "## Gotchas\n\n" + _bullets(composed.gotchas),
             "## Preferences observed in the session\n\n" + _bullets(composed.preferences_observed),
+            *([card.replace("## From the session log", "## From the session log (not model-written)")]
+              if card else []),
         ]
     )
 
 
 def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile,
-                  elide: list[str] | None = None) -> dict[str, str]:
+                  elide: list[str] | None = None, layers_dir: str = ".handoff/latest") -> dict[str, str]:
     files: dict[str, str] = {}
     files["identity.md"] = (
         "# Identity and lasting preferences\n\n"
@@ -149,4 +154,7 @@ def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile,
     order = ["next.md", "delta.md", "project.md", "identity.md", "session.md"]
     combined = [header] + [files[k] for k in order]
     files["HANDOFF.md"] = "\n\n".join(combined).rstrip() + "\n"
+    pointer = (f"_The transcript (`session.md`) and the instruction layers (`project.md`, `identity.md`) "
+               f"are in `{layers_dir}/`. Read them only if the above is not enough._")
+    files["BRIEF.md"] = "\n\n".join([header, files["next.md"], files["delta.md"], pointer]) + "\n"
     return files

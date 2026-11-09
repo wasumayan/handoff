@@ -14,7 +14,7 @@ def _session(n: int) -> Session:
 def test_session_budget_keeps_anchors():
     s = _session(20)
     out = compact_session(s, 3000)
-    assert out.chars <= 3000 + 500  # protected messages may slightly exceed
+    assert out.chars <= 3000
     assert out.truncated
     ids = [m.uuid for m in out.messages]
     assert ids[0] == "m0"  # first human turn
@@ -81,3 +81,22 @@ def test_assistant_reports_outlive_tool_lines():
     out = compact_session(s, 7500)
     assert out.messages[3].text.startswith(s.messages[3].text)
     assert "tool call(s) omitted" in out.messages[3].text
+
+
+def test_repeated_calls_collapse_to_the_last_run():
+    runs = [ToolCall("Bash", "pytest -q", "1 failed", is_error=True)] * 4 + [ToolCall("Bash", "pytest -q", "ok")]
+    s = Session(id="s", source="t", messages=[
+        Message("user", "go"), Message("assistant", "x" * 2000, tool_calls=runs), Message("user", "?"),
+        Message("assistant", "y")])
+    out = compact_session(s, 1500)
+    calls = [t for m in out.messages for t in m.tool_calls]
+    assert len(calls) <= 1 and all("run 5x" in t.input_summary for t in calls)
+
+
+def test_budget_holds_even_for_huge_protected_messages():
+    s = Session(id="s", source="t", summaries=["S" * 5000], messages=[
+        Message("user", "A" * 9000), Message("assistant", "B" * 200), Message("user", "C" * 7000)])
+    out = compact_session(s, 3000)
+    assert out.chars <= 3000
+    assert out.messages[0].text.startswith("AAA") and "chars cut" in out.messages[0].text
+    assert out.messages[-1].text.endswith("CCC")

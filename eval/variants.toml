@@ -26,6 +26,8 @@ kind = "handoff"
 args = ["--no-llm"]
 description = "handoff, deterministic, recipient's default budget"
 
+# Budgets cap the installed block (headers, next.md and delta.md included) since the compaction
+# rework; before it they capped only the instruction docs and transcript.
 [dump-8k]
 kind = "handoff"
 args = ["--no-llm", "--budget", "8000"]
@@ -41,11 +43,22 @@ kind = "handoff"
 args = ["--no-llm", "--budget", "64000"]
 description = "handoff, deterministic, 64k-char budget (no compaction)"
 
+[brief]
+kind = "handoff"
+args = ["--no-llm", "--brief"]
+description = "handoff --brief: only the state card and delta are installed"
+
 [adapted]
 kind = "handoff"
 args = []
 needs_backend = true
 description = "handoff with the model-written next.md (HANDOFF_BASE_URL / HANDOFF_MODEL)"
+
+[adapted-brief]
+kind = "handoff"
+args = ["--brief"]
+needs_backend = true
+description = "model-written next.md plus the state card and delta, nothing else installed"
 
 # The tool as of an older commit, run on identical inputs: compares versions of handoff itself.
 # 39231ee is where this branch started, before the Codex parser and compaction fixes.

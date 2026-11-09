@@ -94,6 +94,7 @@ class Bundle:
         default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
     notes: list[str] = field(default_factory=list)  # warnings surfaced to the user/recipient
+    card: str = ""  # deterministic state card of the newest session, built before compaction
 
     @property
     def chars(self) -> int:

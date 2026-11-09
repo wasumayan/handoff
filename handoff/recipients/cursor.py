@@ -19,5 +19,5 @@ class CursorRecipient(Recipient):
         # .mdc is a whole-file rule; we own this file, so overwrite rather than splice.
         path = self.install_path(cwd)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(FRONTMATTER + files["HANDOFF.md"])
+        path.write_text(FRONTMATTER + self.install_block(files))
         return path
