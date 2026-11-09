@@ -67,7 +67,36 @@ def test_backend_from_env(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     assert Backend.from_env() is None
     b = Backend.from_env("ollama")
-    assert b.host == "localhost:11434" and b.model == "llama3.1"
+    assert b.host == "localhost:11434" and b.model == "qwen3.5" and b.is_ollama
     monkeypatch.setenv("HANDOFF_BASE_URL", "https://x.example/v1/")
     monkeypatch.setenv("HANDOFF_MODEL", "m")
     assert Backend.from_env().base_url == "https://x.example/v1"
+
+
+def test_truncated_prompt_falls_back():
+    # Ollama's OpenAI endpoint at its default window: answers, but read a fraction of the prompt
+    b = FakeBackend([json.dumps({"current_state": "No transcript received."})])
+    b.last_usage = {"prompt_tokens": 5}
+    c, warn = compose(_bundle(), get_recipient("codex").profile, b)
+    assert c is None and "read only 5" in warn
+
+
+def test_ollama_uses_native_api_with_a_window_that_fits(monkeypatch):
+    b = Backend.from_env("ollama")
+    sent = {}
+
+    def post(url, body):
+        sent.update(url=url, body=body)
+        return {"message": {"content": "{}"}, "prompt_eval_count": 10}
+
+    monkeypatch.setattr(b, "_post", post)
+    b.chat([{"role": "user", "content": "x" * 60_000}])
+    assert sent["url"] == "http://localhost:11434/api/chat"
+    opts = sent["body"]["options"]
+    assert opts["num_ctx"] >= 60_000 // 3 + 4000 and sent["body"]["format"] == "json"
+    monkeypatch.setenv("HANDOFF_NUM_CTX", "8192")
+    try:
+        b.chat([{"role": "user", "content": "x" * 60_000}])
+        raise AssertionError("expected BackendError")
+    except BackendError as e:
+        assert "HANDOFF_NUM_CTX" in str(e)

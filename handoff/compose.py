@@ -79,6 +79,18 @@ def _parse(text: str) -> dict | None:
     return obj
 
 
+def _truncated(backend: Backend, msgs: list[dict]) -> str:
+    """Why the backend's answer can't be trusted, or "". A server whose context window is smaller
+    than the prompt may drop the start of it and still answer; the reported prompt size gives it away."""
+    sent = (backend.last_usage or {}).get("prompt_tokens") or 0
+    expected = sum(len(m["content"]) for m in msgs) // 4
+    if 0 < sent < expected // 2:
+        return (f"{backend.host} read only {sent:,} of about {expected:,} prompt tokens: its context "
+                "window is too small. Raise it (Ollama on a non-default port: start it with "
+                "OLLAMA_CONTEXT_LENGTH=32768).")
+    return ""
+
+
 def compose(bundle: Bundle, profile: Profile, backend: Backend) -> tuple[Composed | None, str]:
     """Returns (composed, warning). composed is None when the model failed twice."""
     msgs = messages_for(bundle, profile)
@@ -88,6 +100,9 @@ def compose(bundle: Bundle, profile: Profile, backend: Backend) -> tuple[Compose
             raw = backend.chat(msgs)
         except BackendError as e:
             return None, str(e)
+        cut = _truncated(backend, msgs)
+        if cut:
+            return None, cut
         obj = _parse(raw)
         if obj is not None:
             c = Composed.from_dict(obj)
