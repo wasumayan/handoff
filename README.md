@@ -80,16 +80,30 @@ Sources (auto-detected, or `--from`): `claude_code`, `codex`, `cursor` (rules fi
 ### With or without a model
 
 ```bash
-handoff create --to codex --no-llm                      # deterministic, nothing leaves the machine
-handoff create --to codex --backend ollama --model qwen3 # local
+handoff create --to codex --no-llm                        # deterministic, nothing leaves the machine
+handoff create --to codex --backend ollama                # local model (qwen3.5 by default)
+handoff create --to codex --backend ollama --brief        # local model, install only the summary
 HANDOFF_BASE_URL=https://api.openai.com/v1 HANDOFF_MODEL=gpt-5 HANDOFF_API_KEY=... handoff create --to codex
-handoff create --to codex --dry-run                     # print exactly what would be sent, write nothing
+handoff create --to codex --dry-run                       # print exactly what would be sent, write nothing
 ```
 
 Any OpenAI-compatible `/v1/chat/completions` endpoint works (OpenAI, OpenRouter, Ollama, LM Studio,
 vLLM). With no backend configured you get the `--no-llm` output. The model step writes only
 `next.md` (current state, decisions, open problems, next steps, gotchas, preferences observed in
-conversation). Everything else is deterministic.
+conversation). Everything else is deterministic. The model reads up to 60k chars of the session,
+more than the recipient gets: it condenses, the recipient only reads.
+
+**Local models.** This is the case for running out of usage: a model on your own machine writes the
+handoff. Ollama (anything on port 11434) is called through its native API with a context window
+sized to the prompt, up to `HANDOFF_NUM_CTX` (default 32768). Its OpenAI-compatible endpoint would
+run at the server default of 4,096 tokens and silently drop the start of a long prompt; on one
+session the model then wrote "no work completed". For other servers, if the reported prompt size is
+under half the expected one, the answer is discarded and the handoff falls back to `--no-llm`. A
+10B model (qwen3.5) takes 20-30 s per handoff on a laptop.
+
+**`--brief`** installs only `next.md` and `delta.md`, with a pointer to the transcript and
+instruction layers on disk. Use it when the recipient's context is tight. Without a model,
+`next.md` is a state card copied from the log (below); with one, the model's notes come first.
 
 Before anything is sent or written, obvious secrets (API keys, tokens, `*_SECRET=` lines, private
 keys) are replaced with `[REDACTED:...]`. This is a regex pass, not a guarantee. Use `--dry-run`
@@ -104,10 +118,18 @@ first run says so and has no delta. Add `.handoff/` to `.gitignore` if you do no
 ### Budgets and compaction
 
 Each recipient profile has a character budget (Cursor's is small because `alwaysApply` rules cost
-context on every message). Over budget, `handoff` drops older sessions first, then trims the newest
-session oldest-first (shorten assistant prose, then drop tool detail, then drop the message), and
-only then trims instruction files from the end. The first human turn and the last two messages are
-never dropped. `--budget N` overrides.
+context on every message). It caps what is installed into the recipient's instruction file,
+headers, `next.md` and `delta.md` included. Over budget, `handoff` drops older sessions first, then
+trims the newest session oldest-first (collapse repeated tool calls, drop tool detail, shorten
+assistant prose, then drop the message), and only then trims instruction files from the end. The
+first human turn and the last two messages are never dropped; if they or the source agent's own
+summaries are too long, their middles are cut. No human turn is dropped just to make the final fit:
+if those alone exceed the budget, a note says so. `--budget N` overrides.
+
+**State card.** Built from the session before compaction, so compaction cannot lose it, and copied
+from the log rather than inferred: the latest request (with `--brief`, the task and everything the
+user said), files edited, the last test run and its outcome, and errors never followed by a success
+of the same call.
 
 ## Recipient profiles
 
@@ -120,12 +142,13 @@ facts.
 ## Layout of a handoff
 
 ```
-next.md      where things stand, what to do next (model-written, or last human ask if --no-llm)
+next.md      where things stand, what to do next (model notes and/or the state card)
 delta.md     what changed since the last handoff to this recipient
 project.md   project-level instruction files, memory, git snapshot
 identity.md  user-level instruction files (apply to every project)
 session.md   compacted transcript: human turns in full, tool calls as one line each, errors kept
 HANDOFF.md   all of the above, next.md first
+BRIEF.md     next.md and delta.md only, with a pointer to the rest (what --brief installs)
 ```
 
 ## Evaluation
@@ -147,14 +170,18 @@ These are not public APIs and drift between releases.
   `tool_use`, `tool_result`). `isSidechain` marks subagent transcripts, `isMeta` harness-injected
   turns, `isCompactSummary` Claude's own compaction notes. A message typed while the agent is
   working is an `attachment` record of type `queued_command` with `commandMode: "prompt"`; the same
-  type also carries task notifications and messages from other agents, which are skipped. Verified
-  against 2.1.x.
+  type also carries task notifications and messages from other agents, which are skipped, as are
+  `user` records whose `origin.kind` is `task-notification` or `peer`. A `system` record with
+  subtype `compact_boundary` marks an auto-compaction: the assistant turns before it are replaced by
+  the `isCompactSummary` record that follows, except those listed in
+  `compactMetadata.preservedMessages`; human turns are kept. Verified against 2.1.x.
 - Codex CLI: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta` /
   `response_item` / `event_msg` records, plus an older flat shape. Verified against real 0.142-0.146
   sessions: every turn is written twice (response_item and event_msg); tool calls are
   `function_call` (`shell`, `exec_command`, `wait`) or `custom_tool_call` (`apply_patch`, the
   JavaScript `exec` tool); sub-agent threads (`thread_source: "subagent"`) are skipped. Unknown
-  record types are ignored.
+  record types are ignored. Codex's own compaction (`compacted` records) keeps user messages verbatim
+  and an encrypted summary, so its earlier history is kept as written.
 - Cursor: rules files only. Chat history is in an undocumented SQLite schema and is not read.
 
 ## Not in scope
