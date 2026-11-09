@@ -26,10 +26,12 @@
 - **Context at start: the handoff costs about 1k tokens** (13.5k → 14.4k mean), on top of the
   ~12k-token baseline Codex spends before reading anything. Small next to the 14k-22k the source had
   used by the cut.
-- **Total work: mixed, slightly in the handoff's favour.** On the hard task the smart takeover used
-  36% fewer input tokens (324k vs 504k), a smaller peak context (22k vs 34k), 13 vs 16 tool calls
-  and 59 vs 145 s. On the easiest task it used more (129k vs 99k: it ran the full test suite at the
-  end). Mean total input 238k vs 295k (−19%). With one run each, this is within run-to-run noise.
+- **Total work: no consistent direction.** On the two solved tasks the smart takeover used 129k vs
+  99k input tokens (it ran the full test suite at the end) and 262k vs 282k. Most of the lower mean
+  (238k vs 295k) comes from 10356, which both takeovers failed: there, fewer tokens can just mean
+  stopping sooner, not saving work.
+- **The handoff was the brief only.** The transcript layer it points to was not mounted in the
+  recipient's container; no smart run tried to open it.
 - **What the handoff carried:** the source's diagnosis, its plan and the repo's conventions
   (changelog format, tests with every fix), with "no files edited yet" stated, not the false "fixed"
   an ungrounded model wrote in a first try.

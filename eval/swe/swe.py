@@ -154,8 +154,8 @@ def rewind(home: Path, repo: Path) -> dict:
         cut = calls[len(calls) // 2] if calls else len(lines)
     (home / "rollout.full.jsonl").write_text("".join(lines))
     path.write_text("".join(lines[:cut]))
-    subprocess.run(["git", "checkout", "-q", "--", "."], cwd=repo, check=True)
-    subprocess.run(["git", "clean", "-fdq"], cwd=repo, check=True)  # ignored build files stay
+    subprocess.run([*GIT, "checkout", "-q", "--", "."], cwd=repo, check=True, env=GIT_ENV)
+    subprocess.run([*GIT, "clean", "-fdq"], cwd=repo, check=True, env=GIT_ENV)  # ignored build files stay
     kept = "".join(lines[:cut])
     return {"tool_calls_before_cut": sum(1 for i in calls if i < cut),
             "tool_calls_total": len(calls), "context_at_cut": codex_peak_context(kept)}
@@ -220,9 +220,32 @@ def build_handoff(repo: Path, source_home: Path, dest: Path, model: str) -> dict
             "model_failed": "model step failed" in block or "model step failed" in r.stderr}
 
 
+# Host git on a repo an agent could write to. Its .git/config is restored first (see sanitize); hooks
+# and fsmonitor are also switched off here, and no system or global config is read.
+GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+GIT_ENV = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+
+
+def sanitize(repo: Path, config: str) -> None:
+    """After a container ran in `repo`: undo anything in .git that would make host git run code
+    (config with fsmonitor, filter or diff drivers, includes; hooks). A .git that is no longer a
+    plain directory is refused."""
+    git = repo / ".git"
+    if git.is_symlink() or not git.is_dir():
+        raise RuntimeError(f"{git} was replaced by the agent; refusing to run git on it")
+    for p in (git / "config", git / "hooks"):
+        if p.is_symlink() or p.is_file():
+            p.unlink()
+        elif p.is_dir():
+            shutil.rmtree(p)
+    (git / "config").write_text(config)
+    (git / "hooks").mkdir()
+
+
 def git_diff(repo: Path, base: str) -> str:
-    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
-    return subprocess.run(["git", "diff", "--cached", base], cwd=repo, capture_output=True, text=True).stdout
+    subprocess.run([*GIT, "add", "-A"], cwd=repo, capture_output=True, env=GIT_ENV)
+    return subprocess.run([*GIT, "diff", "--cached", base], cwd=repo, capture_output=True, text=True,
+                          env=GIT_ENV).stdout
 
 
 def run_instance(inst: dict, out: Path, model: str) -> dict:
@@ -241,14 +264,16 @@ def run_instance(inst: dict, out: Path, model: str) -> dict:
         subprocess.run(["git", "clone", "-q", f"https://github.com/{inst['repo']}", str(cache)], check=True)
     subprocess.run(["git", "clone", "-q", str(cache), str(repo)], check=True)
     subprocess.run(["git", "checkout", "-q", base], cwd=repo, check=True)
+    config = (repo / ".git" / "config").read_text()  # known good, before any agent runs
     res: dict = {"instance": inst["instance_id"], "difficulty": inst["difficulty"], "model": model}
 
     print(f"{inst['instance_id']}: source run", file=sys.stderr)
     source_home = work / "source-home"
     res["source"] = run_codex(tag, repo, source_home / ".codex", SOURCE_PROMPT.format(issue=inst["problem_statement"]))
+    sanitize(repo, config)
     res["source"]["grade"] = grade(tag, inst, repo, work / "source")  # had it not been cut
     (work / "source" / "diff.patch").write_text(git_diff(repo, base))
-    subprocess.run(["git", "reset", "-q"], cwd=repo)
+    subprocess.run([*GIT, "reset", "-q", "--hard", base], cwd=repo, check=True, env=GIT_ENV)
     res["source"].update(rewind(source_home / ".codex", repo))
     snap = work / "snapshot"
     shutil.copytree(repo, snap, symlinks=True)
@@ -263,6 +288,7 @@ def run_instance(inst: dict, out: Path, model: str) -> dict:
         if cond == "smart":
             r["handoff"] = build_handoff(repo, source_home, d / "handoff", model)
         r.update(run_codex(tag, repo, d / "home", TAKEOVER_PROMPT.format(issue=inst["problem_statement"])))
+        sanitize(repo, config)
         r["grade"] = grade(tag, inst, repo, d)
         (d / "diff.patch").write_text(git_diff(repo, base))
         res[cond] = r

@@ -15,7 +15,8 @@ has been run against a paid agent yet.
 
 ## 1. What the free run already shows
 
-`uv run python eval/run.py score` (no model, seconds) on the current five scenarios, both sources:
+`uv run python eval/run.py score` (no model, seconds) on the current five scenarios, both sources,
+with the tool as on `main` before the compaction rework (later numbers are in §7):
 
 | variant | mean chars | ~tokens | recall (facts / corrections / dead ends) |
 |---|---|---|---|
@@ -362,7 +363,10 @@ The synthetic scenarios test whether preferences and corrections survive the han
 benchmarks test whether work state survives, in large codebases where orientation is expensive.
 
 **SWE-bench Verified (or a fresher set such as SWE-bench Pro or SWE-rebench, to limit
-training-data contamination).**
+training-data contamination).** *A first version is implemented in `eval/swe/` (results in
+`eval/swe/RESULTS.md`). It rewinds a finished source run to just before its first edit rather
+than cutting the live run: a pilot that cut three tool calls after the first edit found the bug
+already fixed, leaving nothing to hand off with current models.*
 
 Protocol:
 1. Run the source agent on an instance with a hard cut: a turn count, a token count, or
