@@ -167,6 +167,8 @@ class ClaudeCodeSource(Source):
                     continue
                 if rec.get("isSidechain") or rec.get("isMeta"):
                     continue  # subagent transcript / harness-injected message
+                if (rec.get("origin") or {}).get("kind") in ("task-notification", "peer"):
+                    continue  # a background task or another agent reporting back, not the human
                 msg = rec.get("message")
                 if not isinstance(msg, dict):
                     continue

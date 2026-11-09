@@ -77,6 +77,8 @@ def test_message_typed_mid_turn_is_a_user_turn(project, claude_home):
         queued("q2", "<task-notification>done</task-notification>", "task-notification"),
         queued("q3", '<agent-message from="x">hi</agent-message>', "prompt", isMeta=True,
                origin={"kind": "peer"}),
+        {"type": "user", "uuid": "n1", "origin": {"kind": "task-notification"},  # between turns
+         "message": {"role": "user", "content": "<task-notification>done</task-notification>"}},
         {"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [
             {"type": "text", "text": "Only handoff, then."}]}},
     ]
