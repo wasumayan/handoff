@@ -161,6 +161,10 @@ model-adapted. Measured: hidden tests (first try and after nudges), nudges and q
 input), rule compliance, repeated dead ends, tokens, peak context, time, and cost. A model-free score
 covers handoff size and recall. Small n: read it as a comparison between variants, not as a benchmark.
 
+`eval/swe/` runs the same question on real tasks: three SWE-bench Verified instances in Docker,
+where Codex is cut off just before its first edit and a fresh Codex takes over with or without a
+handoff written by a local model. First results are in `eval/swe/RESULTS.md`.
+
 ## Formats this depends on
 
 These are not public APIs and drift between releases.
