@@ -7,10 +7,10 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, state
+from . import __version__, card, state
 from .backend import Backend, BackendError
 from .compact import compact
-from .compose import compose, messages_for
+from .compose import MODEL_INPUT_CHARS, compose, messages_for
 from .model import Bundle, Doc
 from .recipients import RECIPIENTS, get_recipient
 from .redact import redact_bundle
@@ -76,11 +76,13 @@ def cmd_create(a: argparse.Namespace) -> int:
     if n:
         what = "secret-looking" if a.keep_pii else "secret-looking or personal (email, phone)"
         bundle.notes.append(f"{n} {what} value(s) redacted")
+    bundle.card = card.build(bundle.sessions[0] if bundle.sessions else None, with_user=a.brief)
+    rcp.brief = a.brief
     budget = a.budget or rcp.profile.context_budget
-    raw_chars = bundle.chars
-    bundle = compact(bundle, budget)
-    if raw_chars != bundle.chars:
-        _log(f"compacted {raw_chars:,} → {bundle.chars:,} chars (budget {budget:,})")
+    full = bundle
+    bundle = compact(full, budget)
+    if full.chars != bundle.chars:
+        _log(f"compacted {full.chars:,} → {bundle.chars:,} chars (budget {budget:,})")
 
     backend = None
     if not a.no_llm:
@@ -91,8 +93,10 @@ def cmd_create(a: argparse.Namespace) -> int:
         if backend is None:
             _log("no backend configured (HANDOFF_BASE_URL / --backend); producing --no-llm handoff")
 
+    # The model reads more than the recipient will: it condenses, the recipient only reads.
+    model_bundle = compact(full, max(budget, MODEL_INPUT_CHARS))
     if a.dry_run:
-        msgs = messages_for(bundle, rcp.profile)
+        msgs = messages_for(model_bundle, rcp.profile)
         dest = f"{backend.model} at {backend.host}" if backend else "(no backend)"
         print(f"# would send {sum(len(m['content']) for m in msgs):,} chars to {dest}\n")
         for m in msgs:
@@ -101,15 +105,28 @@ def cmd_create(a: argparse.Namespace) -> int:
 
     composed = None
     if backend is not None:
-        _log(f"sending {bundle.chars:,} chars to {backend.model} at {backend.host}")
-        composed, warn = compose(bundle, rcp.profile, backend)
+        _log(f"sending {model_bundle.chars:,} chars to {backend.model} at {backend.host}")
+        composed, warn = compose(model_bundle, rcp.profile, backend)
         if composed is None:
             _log(f"model step failed: {warn}. Falling back to --no-llm output.")
             bundle.notes.append("model step failed; next.md is not synthesized")
 
-    files = rcp.render(bundle, composed)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(a.out) if a.out else Path(cwd) / ".handoff" / f"{stamp}-{rcp.name}"
+    layers_dir = str(out_dir.resolve().relative_to(Path(cwd).resolve())
+                     if out_dir.resolve().is_relative_to(Path(cwd).resolve()) else out_dir.resolve())
+    files = rcp.render(bundle, composed, layers_dir)
+    # The budget is on what the recipient reads: headers, next.md and delta.md count too. Squeezing
+    # further never drops a human turn; if those alone do not fit, the budget gives.
+    for _ in range(4):
+        over = len(rcp.install_block(files)) - budget
+        if over <= 0 or bundle.chars <= 500:
+            break
+        # rendering adds markup per message that bundle.chars does not count: overshoot the cut
+        bundle = compact(bundle, max(500, bundle.chars - over * 5 // 4), keep_users=True)
+        files = rcp.render(bundle, composed, layers_dir)
+    if len(rcp.install_block(files)) > budget:
+        _log(f"note: installed block is {len(rcp.install_block(files)):,} chars, over the {budget:,} budget")
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (out_dir / name).write_text(content)
@@ -198,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--install", action="store_true",
                    help="write into the recipient's instruction file (marker block)")
     c.add_argument("--out", help="output directory (default .handoff/<ts>-<recipient>)")
+    c.add_argument("--brief", action="store_true",
+                   help="install only next.md and delta.md; the transcript stays in the output directory")
     c.add_argument("--stdout", action="store_true", help="also print HANDOFF.md")
     c.add_argument("--keep-pii", action="store_true",
                    help="keep emails, phone numbers and the home path (secrets are always redacted)")

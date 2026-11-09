@@ -12,7 +12,8 @@ def test_create_no_llm_install_and_delta(project, claude_home, capsys):
     assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--out", str(out),
                  "--install"]) == 0
     files = {p.name for p in out.iterdir()}
-    assert files == {"HANDOFF.md", "identity.md", "project.md", "session.md", "delta.md", "next.md"}
+    assert files == {"HANDOFF.md", "BRIEF.md", "identity.md", "project.md", "session.md", "delta.md",
+                     "next.md"}
     h = (out / "HANDOFF.md").read_text()
     assert "sk-ant" not in h and "[REDACTED:anthropic]" in h
     assert "AI researcher" in (out / "identity.md").read_text()
@@ -103,3 +104,30 @@ def test_keep_pii_flag(project, claude_home, capsys):
     assert "lead@corp.example.com" not in capsys.readouterr().out
     assert main(["create", "--to", "codex", "--path", str(project), "--dry-run", "--keep-pii"]) == 0
     assert "lead@corp.example.com" in capsys.readouterr().out
+
+
+def test_brief_installs_only_the_summary_and_budget_is_strict(project, claude_home):
+    out = project / ".handoff" / "b"
+    assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--out", str(out),
+                 "--install", "--brief"]) == 0
+    block = (project / "AGENTS.md").read_text().split("<!-- handoff:begin -->")[1]
+    assert "From the session log" in block and "# Session history" not in block
+    assert ".handoff/b/" in block  # points at the layers on disk
+    assert "**Task (first request):**" in (out / "next.md").read_text()
+
+    # a long session: the installed block, headers and next.md included, must fit the budget
+    from handoff.sources.claude_code import ClaudeCodeSource
+    sp = ClaudeCodeSource(claude_home).session_paths(str(project))[0]
+    sp.write_text(sp.read_text() + "".join(json.dumps(
+        {"type": "assistant", "uuid": f"x{i}", "message": {"role": "assistant", "content": "y" * 600}})
+        + "\n" for i in range(40)))
+
+    def block(budget):
+        args = ["create", "--to", "codex", "--path", str(project), "--no-llm", "--out",
+                str(project / f"o{budget}"), "--install"] + (["--budget", str(budget)] if budget else [])
+        assert main(args) == 0
+        return (project / "AGENTS.md").read_text().split("<!-- handoff:begin -->")[1].split(
+            "<!-- handoff:end -->")[0].strip()
+
+    assert len(block(None)) > 8000
+    assert len(block(8000)) <= 8000

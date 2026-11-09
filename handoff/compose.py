@@ -17,6 +17,10 @@ from .render import render_layers
 if TYPE_CHECKING:
     from .recipients.base import Profile
 
+# How much of the session the model reads: more than any recipient budget, since it condenses
+# rather than passes text on. About 20k tokens, which fits a 32k local window with room to answer.
+MODEL_INPUT_CHARS = 60_000
+
 KEYS = ["current_state", "decisions", "open_problems", "next_steps", "gotchas",
         "preferences_observed"]
 
