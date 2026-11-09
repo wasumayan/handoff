@@ -21,3 +21,9 @@ def test_card_copies_facts_from_the_log():
     assert "**Last test run:** `uv run pytest -q`: FAILED" in card
     assert "pip install pandas" in card and "ruff check" not in card.split("never followed")[1]
     assert build(None) == "" and build(Session(id="e", source="t")) == ""
+
+
+def test_card_says_when_nothing_was_edited():
+    s = Session(id="s", source="t", messages=[
+        Message("user", "fix it"), Message("assistant", "", tool_calls=[ToolCall("Bash", "rg bug")])])
+    assert "**Files edited:** none in this session" in build(s)
