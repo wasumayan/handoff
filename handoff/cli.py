@@ -13,7 +13,7 @@ from .compact import compact
 from .compose import MODEL_INPUT_CHARS, compose, messages_for
 from .model import Bundle, Doc
 from .recipients import RECIPIENTS, get_recipient
-from .redact import redact_bundle
+from .redact import home_to_tilde, redact_bundle
 from .sources import SOURCES, detect_sources, get_source
 from .sources import git as gitsrc
 
@@ -115,6 +115,8 @@ def cmd_create(a: argparse.Namespace) -> int:
     out_dir = Path(a.out) if a.out else Path(cwd) / ".handoff" / f"{stamp}-{rcp.name}"
     layers_dir = str(out_dir.resolve().relative_to(Path(cwd).resolve())
                      if out_dir.resolve().is_relative_to(Path(cwd).resolve()) else out_dir.resolve())
+    if not a.keep_pii:
+        layers_dir = home_to_tilde(layers_dir)  # added after redaction ran, so scrub it here
     files = rcp.render(bundle, composed, layers_dir)
     # The budget is on what the recipient reads: headers, next.md and delta.md count too. Squeezing
     # further never drops a human turn; if those alone do not fit, the budget gives.

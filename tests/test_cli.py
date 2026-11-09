@@ -106,7 +106,7 @@ def test_keep_pii_flag(project, claude_home, capsys):
     assert "lead@corp.example.com" in capsys.readouterr().out
 
 
-def test_brief_installs_only_the_summary_and_budget_is_strict(project, claude_home):
+def test_brief_installs_only_the_summary_and_budget_is_strict(project, claude_home, monkeypatch):
     out = project / ".handoff" / "b"
     assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--out", str(out),
                  "--install", "--brief"]) == 0
@@ -128,6 +128,12 @@ def test_brief_installs_only_the_summary_and_budget_is_strict(project, claude_ho
         assert main(args) == 0
         return (project / "AGENTS.md").read_text().split("<!-- handoff:begin -->")[1].split(
             "<!-- handoff:end -->")[0].strip()
+
+    # an --out outside the project is pointed at with ~, not the user's home path
+    monkeypatch.setenv("HOME", str(project.parent))
+    assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--brief", "--install",
+                 "--out", str(project.parent / "elsewhere")]) == 0
+    assert "`~/elsewhere/`" in (project / "AGENTS.md").read_text()
 
     assert len(block(None)) > 8000
     assert len(block(8000)) <= 8000
