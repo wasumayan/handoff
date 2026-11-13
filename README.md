@@ -1,201 +1,183 @@
 # handoff
 
-Move coding-agent context from one model or app to another, in the form the recipient reads best.
+Hand a coding session from one AI agent to another without losing the thread.
 
-Built for one concrete situation: Claude Code credits run out mid-task, Codex (or a local model, or
-Cursor) is available, and "paste the old chat" is not enough. The next agent needs the project's
-state, what changed, the user's standing preferences, and what to do next, in its own instruction
-file format.
+You hit your Claude Code usage limit halfway through a task. Codex, Cursor or a local model is
+available, but it starts from zero: it doesn't know what you asked for, what was tried and failed,
+which corrections you made, or what's half-done. `handoff` reads the old session from disk and
+writes that context into the file the next agent loads at startup (`AGENTS.md` for Codex,
+`CLAUDE.md` for Claude Code, a rules file for Cursor). Then you start the new agent and keep going.
 
-**Honest framing.** The output is markdown files. The work is in (a) parsing session formats a
-human cannot read (a short Claude Code session is ~500 KB of JSONL), (b) keeping identity /
-project / session / delta as separate layers instead of one blob, (c) computing what changed since
-the recipient last saw the project, and (d) writing into the recipient's native instruction file
-without clobbering what is already there. Whether the model-adapted step beats a plain structured
-dump is an open question; `eval/` exists to answer it, not to assume it.
+It works offline with no model and no API key. Python 3.11+, no dependencies.
 
-## Current status (for whoever runs the eval)
-
-**Done:**
-- The tool works on real Claude Code and Codex sessions.
-- The eval harness is built: five synthetic scenarios, eight handoff variants, and the Claude Code
-  and Codex agents. All tests pass.
-- Each CLI was smoke-tested once. That shows the plumbing works; it is not a result.
-
-**Not done:** the actual eval runs. That's the next step.
-
-**Run these, in order** (details in `eval/README.md`):
+## Quick start: Claude Code → Codex
 
 ```bash
-git clone https://github.com/wasumayan/handoff && cd handoff
-uv sync --extra dev && uv run pytest -q          # needs Python 3.11+ and uv; all tests should pass
+# 1. Install (uv: https://docs.astral.sh/uv/; pipx works too)
+uv tool install git+https://github.com/wasumayan/handoff
 
-# install the claude and codex CLIs, then:
-export ANTHROPIC_API_KEY=...  OPENAI_API_KEY=...
-export HANDOFF_BASE_URL=https://api.openai.com/v1 HANDOFF_MODEL=<an OpenAI model> HANDOFF_API_KEY=$OPENAI_API_KEY
+# 2. Go to the project the old agent was working in, and check what handoff finds
+cd ~/code/myproject
+handoff sources -v
 
-uv run python eval/run.py doctor --live          # 1. checks setup; makes one tiny paid call per CLI
-uv run python eval/run.py score                  # 2. free: what each handoff variant contains
-uv run python eval/run.py run --agent claude --scenarios 01 --variants dump --out eval/out/try
-                                                 # 3. one run, to see the real cost per run
-uv run python eval/run.py run --agent claude --runs 3 --out eval/out/claude   # 4. full runs
-uv run python eval/run.py run --agent codex  --runs 3 --out eval/out/codex
-```
-
-Then send back `eval/out/claude/results.md` and `eval/out/codex/results.md`.
-
-The agents edit files and run commands without asking, so use a VM or container. Each full run is
-about 120 agent runs. Claude Code calls are capped at $2 each (`--max-budget-usd`). If a run is
-interrupted, rerun the same command: finished runs are skipped.
-
-## Install
-
-```bash
-uv tool install git+https://github.com/wasumayan/handoff   # or: pipx install git+...
-# or from a checkout:
-uv tool install .
-```
-
-Python 3.11+, no runtime dependencies.
-
-## Use
-
-```bash
-cd ~/code/myproject            # the directory the source agent was working in
-handoff sources                # what state exists here (Claude Code, Codex, Cursor)
+# 3. Write the handoff into AGENTS.md
 handoff create --to codex --install
+
+# 4. Start Codex and point it at the handoff
+codex "Read the handoff section in AGENTS.md and continue the work from where it stopped."
 ```
 
-That reads the newest Claude Code session for this directory plus `~/.claude/CLAUDE.md`,
-`CLAUDE.md`, `.claude/rules/`, project memory, and the git state; writes
-`.handoff/<timestamp>-codex/{next,delta,project,identity,session}.md` and a combined `HANDOFF.md`;
-and splices `HANDOFF.md` into `AGENTS.md` between `<!-- handoff:begin -->` / `<!-- handoff:end -->`
-markers. Content outside the markers is never touched. Re-running replaces only the block.
+Step 2 lists the recent sessions for this directory, newest first, with each one's first request.
+`create` uses the newest. To pick a different one, pass `--session <id>`, for example
+`handoff create --to codex --install --session 54cbb32f`.
 
-Recipients: `codex` (AGENTS.md), `claude` (CLAUDE.md), `cursor` (`.cursor/rules/handoff.mdc`),
-`chat` (one paste-able prompt for ChatGPT / a local chat UI).
+## What happens after the handoff
 
-Sources (auto-detected, or `--from`): `claude_code`, `codex`, `cursor` (rules files only).
+**Codex** reads `AGENTS.md` from the repo root at the start of every session, so running `codex`
+in the project is enough to load it. It still waits for a prompt, so start with one like the
+example above. By default Codex reads only the first 32 KiB of `AGENTS.md`, which is why the Codex
+handoff is capped at 24,000 characters.
 
-### With or without a model
+**Claude Code** (`--to claude`) reads `CLAUDE.md` the same way:
 
 ```bash
-handoff create --to codex --no-llm                        # deterministic, nothing leaves the machine
-handoff create --to codex --backend ollama                # local model (qwen3.5 by default)
-handoff create --to codex --backend ollama --brief        # local model, install only the summary
-HANDOFF_BASE_URL=https://api.openai.com/v1 HANDOFF_MODEL=gpt-5 HANDOFF_API_KEY=... handoff create --to codex
-handoff create --to codex --dry-run                       # print exactly what would be sent, write nothing
+handoff create --from codex --to claude --install
+claude "Read the handoff section in CLAUDE.md and continue the work from where it stopped."
 ```
 
-Any OpenAI-compatible `/v1/chat/completions` endpoint works (OpenAI, OpenRouter, Ollama, LM Studio,
-vLLM). With no backend configured you get the `--no-llm` output. The model step writes only
-`next.md` (current state, decisions, open problems, next steps, gotchas, preferences observed in
-conversation). Everything else is deterministic. The model reads up to 60k chars of the session,
-more than the recipient gets: it condenses, the recipient only reads.
+**Cursor** (`--to cursor`) gets `.cursor/rules/handoff.mdc` with `alwaysApply: true`, so every
+Agent chat in the project sees it. Open a chat and ask it to continue.
 
-**Local models.** This is the case for running out of usage: a model on your own machine writes the
-handoff. Ollama (anything on port 11434) is called through its native API with a context window
-sized to the prompt, up to `HANDOFF_NUM_CTX` (default 32768). Its OpenAI-compatible endpoint would
-run at the server default of 4,096 tokens and silently drop the start of a long prompt; on one
-session the model then wrote "no work completed". For other servers, if the reported prompt size is
-under half the expected one, the answer is discarded and the handoff falls back to `--no-llm`. A
-10B model (qwen3.5) takes 20-30 s per handoff on a laptop.
+**A chat model with no file access** (ChatGPT, a local chat UI): run
+`handoff create --to chat --stdout` and paste the output.
 
-**`--brief`** installs only `next.md` and `delta.md`, with a pointer to the transcript and
-instruction layers on disk. Use it when the recipient's context is tight. Without a model,
-`next.md` is a state card copied from the log (below); with one, the model's notes come first.
+### What the new agent sees
 
-Before anything is sent or written, obvious secrets (API keys, tokens, `*_SECRET=` lines, private
-keys) are replaced with `[REDACTED:...]`. This is a regex pass, not a guarantee. Use `--dry-run`
-if the session touched anything sensitive.
+The installed block sits between `<!-- handoff:begin -->` and `<!-- handoff:end -->`. Anything
+else already in the file stays as it was, and running `create` again replaces only the block. In
+order:
 
-### Delta
+1. **Where things stand:** the latest request, files edited, the last test run and its result, and
+   errors that were never fixed, all copied from the session log. With a model configured, its
+   summary of decisions, open problems and next steps comes first.
+2. **What changed** since the last handoff to this agent: new commits, the diff stat and
+   uncommitted changes.
+3. **Project context:** the old agent's instruction files and memory, plus a git snapshot.
+4. **Your user-level preferences** (`~/.claude/CLAUDE.md`).
+5. **The transcript, compacted:** your messages in full, each tool call on one line, and errors
+   kept. Older material is trimmed first when it doesn't fit.
 
-`.handoff/state.json` records the commit and last message seen at each handoff, per recipient. The
-next run's `delta.md` lists commits, diff stat, uncommitted changes and new messages since then. The
-first run says so and has no delta. Add `.handoff/` to `.gitignore` if you do not want this shared.
+If the new agent's context is tight, `--brief` installs only items 1 and 2 plus a pointer to the
+full files.
 
-### Budgets and compaction
+### When you're done
 
-Each recipient profile has a character budget (Cursor's is small because `alwaysApply` rules cost
-context on every message). It caps what is installed into the recipient's instruction file,
-headers, `next.md` and `delta.md` included. Over budget, `handoff` drops older sessions first, then
-trims the newest session oldest-first (collapse repeated tool calls, drop tool detail, shorten
-assistant prose, then drop the message), and only then trims instruction files from the end. The
-first human turn and the last two messages are never dropped; if they or the source agent's own
-summaries are too long, their middles are cut. No human turn is dropped just to make the final fit:
-if those alone exceed the budget, a note says so. `--budget N` overrides.
+- **Don't commit the block.** It contains your session (secrets redacted, see below). Delete
+  everything between the two markers, or delete the file if `handoff` created it. Add `.handoff/`
+  to `.gitignore`.
+- **Switching back** works the same way in reverse, for example
+  `handoff create --from codex --to claude --install` once your Claude Code usage resets. The
+  "what changed" section then lists what Codex did since the last handoff to Claude.
 
-**State card.** Built from the session before compaction, so compaction cannot lose it, and copied
-from the log rather than inferred: the latest request (with `--brief`, the task and everything the
-user said), files edited, the last test run and its outcome, and errors never followed by a success
-of the same call.
+## Options
 
-## Recipient profiles
-
-`handoff/recipients/profiles/*.toml` hold every claim about what a recipient wants: instruction
-file, budget, style, what to emphasize, what to drop. They are data, not code, so they are easy to
-argue with. `handoff profiles -v` prints them. There is deliberately no runtime web lookup of model
-cards: that would make output nondeterministic and untestable for a small, slowly changing set of
-facts.
-
-## Layout of a handoff
-
-```
-next.md      where things stand, what to do next (model notes and/or the state card)
-delta.md     what changed since the last handoff to this recipient
-project.md   project-level instruction files, memory, git snapshot
-identity.md  user-level instruction files (apply to every project)
-session.md   compacted transcript: human turns in full, tool calls as one line each, errors kept
-HANDOFF.md   all of the above, next.md first
-BRIEF.md     next.md and delta.md only, with a pointer to the rest (what --brief installs)
+```bash
+handoff create --to codex --dry-run         # print what would be sent to a model; write nothing
+handoff create --to codex --out /tmp/h      # write the files outside the project; touch nothing in it
+handoff create --to codex --sessions 3      # include the last three sessions, not just the newest
+handoff create --to codex --budget 50000    # character budget (defaults: Codex 24k, Claude 32k, Cursor 16k)
+handoff profiles -v                         # what each recipient gets, and why
 ```
 
-## Evaluation
+Sources are detected automatically: `claude_code` and `codex` sessions, and `cursor` rules files
+(Cursor's chat history isn't readable). Use `--from` to choose when several have data.
 
-See `eval/README.md`. Five synthetic scenarios, each stopped at a midpoint of a session (Claude Code
-and Codex formats). Each hides facts, a user correction and a dead end that exist only in that
-session. A recipient agent (Claude Code, Codex, or a stand-in) continues under each handoff variant:
-none, raw transcript, ideal, `--no-llm` at several budgets, an older version of the tool, or
-model-adapted. Measured: hidden tests (first try and after nudges), nudges and questions (manual
-input), rule compliance, repeated dead ends, tokens, peak context, time, and cost. A model-free score
-covers handoff size and recall. Small n: read it as a comparison between variants, not as a benchmark.
+### With a model (optional)
 
-`eval/swe/` runs the same question on real tasks: three SWE-bench Verified instances in Docker,
-where Codex is cut off just before its first edit and a fresh Codex takes over with or without a
-handoff written by a local model. First results are in `eval/swe/RESULTS.md`.
+Without a model, the handoff is deterministic: everything in it is copied or trimmed from the logs.
+With one, the model also writes a summary of the state, decisions, open problems, next steps and
+gotchas. Any OpenAI-compatible endpoint works:
+
+```bash
+handoff create --to codex --backend ollama --install       # local model through Ollama (qwen3.5 by default)
+HANDOFF_BASE_URL=https://api.openai.com/v1 HANDOFF_MODEL=gpt-5 HANDOFF_API_KEY=... \
+  handoff create --to codex --install
+```
+
+A local model fits the out-of-usage case, since nothing is sent to a paid API. A 10B model takes
+20-30 s per handoff on a laptop. With Ollama the context window is sized to the prompt, up to
+`HANDOFF_NUM_CTX` (default 32768). If the model fails or returns something unusable, you get the
+model-free handoff instead.
+
+## Privacy
+
+Nothing leaves your machine unless you configure a model. Before anything is written or sent,
+`handoff` replaces API keys, tokens, private keys, `*_SECRET=`-style values, URL passwords, emails
+and phone numbers with `[REDACTED:...]`, and rewrites your home directory to `~`. This is
+pattern matching, not a guarantee: your username can still appear in other paths (for example
+`/tmp/claude-<user>/` or Claude Code's project folder names). If the session touched anything
+sensitive, check the output, or the `--dry-run` text, before sharing it.
+
+## How it works
+
+- **Parsing.** It reads Claude Code's and Codex's session logs (JSONL, often megabytes). Thinking
+  blocks, subagent transcripts and records the harness writes are skipped: background-task
+  reports, `!` shell commands and their output, built-in slash commands like `/model`, and system
+  reminders. What remains is your messages, the agent's replies and one line per tool call.
+  Claude Code's own compaction summaries replace the history they cover.
+- **Compaction.** It cuts to fit a per-recipient character budget, in a fixed order: older
+  sessions first, then repeated tool calls, tool detail and long assistant prose, then whole
+  assistant messages, and your messages last. Your first message and the last two messages are
+  always kept.
+- **Delta.** `.handoff/state.json` records the commit and last message at each handoff, per
+  recipient, so the next handoff can say what changed.
+- **Recipient profiles.** `handoff/recipients/profiles/*.toml` hold each recipient's instruction
+  file, budget and style, as data rather than code.
+
+## Does it help?
+
+Not settled yet. A first SWE-bench sanity check, with 3 tasks and one run each, showed no
+difference in tasks solved; the handoff cost about 1k tokens of context. Details are in
+[`eval/swe/RESULTS.md`](eval/swe/RESULTS.md). A larger eval, with five scenarios built so the
+next agent can't succeed without the earlier session, is ready to run but has no results yet:
+see [`eval/README.md`](eval/README.md).
 
 ## Formats this depends on
 
-These are not public APIs and drift between releases.
+None of these are public APIs, and they change between releases.
 
-- Claude Code: `~/.claude/projects/<cwd with non-alphanumerics as "-">/<session>.jsonl`. Records of
-  type `user` / `assistant` carry `message.content` as a string or blocks (`text`, `thinking`,
-  `tool_use`, `tool_result`). `isSidechain` marks subagent transcripts, `isMeta` harness-injected
-  turns, `isCompactSummary` Claude's own compaction notes. A message typed while the agent is
-  working is an `attachment` record of type `queued_command` with `commandMode: "prompt"`; the same
-  type also carries task notifications and messages from other agents, which are skipped, as are
-  `user` records whose `origin.kind` is `task-notification` or `peer`. A `system` record with
-  subtype `compact_boundary` marks an auto-compaction: the assistant turns before it are replaced by
-  the `isCompactSummary` record that follows, except those listed in
-  `compactMetadata.preservedMessages`; human turns are kept. Verified against 2.1.x.
-- Codex CLI: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` with `session_meta` /
-  `response_item` / `event_msg` records, plus an older flat shape. Verified against real 0.142-0.146
-  sessions: every turn is written twice (response_item and event_msg); tool calls are
-  `function_call` (`shell`, `exec_command`, `wait`) or `custom_tool_call` (`apply_patch`, the
-  JavaScript `exec` tool); sub-agent threads (`thread_source: "subagent"`) are skipped. Unknown
-  record types are ignored. Codex's own compaction (`compacted` records) keeps user messages verbatim
-  and an encrypted summary, so its earlier history is kept as written.
-- Cursor: rules files only. Chat history is in an undocumented SQLite schema and is not read.
-
-## Not in scope
-
-App-to-app transfers (dating profiles, playlists, calendars). Different access problem, different
-trust problem.
+- **Claude Code** (verified against 2.1.x): `~/.claude/projects/<cwd with non-alphanumerics as
+  "-">/<session>.jsonl`.
+  - Conversation is in `user` / `assistant` records, whose `message.content` is a string or a list
+    of blocks (`text`, `thinking`, `tool_use`, `tool_result`).
+  - `isSidechain` marks subagent transcripts and `isMeta` marks harness-injected turns.
+    `isCompactSummary` marks Claude's own compaction notes.
+  - A message typed while the agent is working is an `attachment` of type `queued_command` with
+    `commandMode: "prompt"`.
+  - Harness records are skipped: `user` records with `origin.kind` `task-notification` or `peer`,
+    and `user` records starting with `<bash-input>`, `<bash-stdout>`, `<bash-stderr>`,
+    `<task-notification>` or `<local-command-caveat>`.
+  - A slash command (`<command-name>`) followed by `<local-command-stdout>` ran inside the harness
+    and is dropped. One without local output, such as a skill, is kept as `/name args`.
+  - A `system` record with subtype `compact_boundary` marks an auto-compaction. The summary after
+    it replaces the assistant turns before it, except those in
+    `compactMetadata.preservedMessages`.
+- **Codex CLI** (verified against 0.142-0.146): `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
+  - Records are `session_meta` / `response_item` / `event_msg`, plus an older flat shape.
+  - Each turn is written twice, once as `response_item` and once as `event_msg`.
+  - Tool calls are `function_call` (`shell`, `exec_command`, `wait`) or `custom_tool_call`
+    (`apply_patch`, `exec`).
+  - Sub-agent threads are skipped. Codex's `compacted` records keep user messages verbatim.
+- **Cursor:** rules files only. Its chat history is in an undocumented SQLite schema.
 
 ## Development
 
 ```bash
-uv venv && . .venv/bin/activate && uv pip install -e ".[dev]"
-pytest -q && ruff check .
+git clone https://github.com/wasumayan/handoff && cd handoff
+uv sync --extra dev
+uv run pytest -q && uv run ruff check .
 ```
+
+## License
+
+[MIT](LICENSE)

@@ -39,11 +39,9 @@ cd ~/path/to/your-project
 handoff sources -v
 ```
 
-Expected: a `*` next to `claude_code` with `sessions=N` where N > 0, and the JSONL paths listed.
-If `sessions=0`, Claude Code has not been run from exactly this directory on this machine (the
-slug is the absolute path), so pick a repo where it has. `codex` with `sessions>0` means the
-Codex parser has real data to be checked against; send me the first three lines of one of its
-files (`head -3 <path>`) and the `handoff sources -v` output.
+Expected: a `*` next to `claude_code` with `sessions=N` where N > 0, and the recent sessions
+listed. If `sessions=0`, Claude Code has not been run from exactly this directory on this machine
+(the slug is the absolute path), so pick a repo where it has.
 
 ```bash
 # read-only: prints exactly what a model would receive, writes nothing
@@ -106,8 +104,3 @@ export HANDOFF_BASE_URL=http://localhost:8000/v1 HANDOFF_MODEL=Qwen/Qwen2.5-Code
 The tool-calling flags are needed only for the stand-in agent; the parser name depends on the model
 family (hermes for Qwen, llama3_json for Llama). On a SLURM cluster, run the server inside an
 allocation, not on the login node, and download weights where the compute nodes can read them.
-
-## 6. Report back
-
-Paste the `handoff sources -v` output, the stderr of the first `create`, and anything in
-`session.md` that looks wrong. Then the eval tables from `results.md`.
