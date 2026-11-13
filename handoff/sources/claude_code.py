@@ -85,6 +85,23 @@ def _queued_prompt(att: object) -> str:
     return _text_of(att.get("prompt")).strip()
 
 
+# User records the harness writes, not the human: a `!` command and its output, a background task
+# reporting back (older versions carry no origin), the caveat before local command output.
+HARNESS_PREFIXES = ("<bash-input>", "<bash-stdout>", "<bash-stderr>", "<task-notification>",
+                    "<local-command-caveat>")
+LOCAL_OUTPUT_PREFIXES = ("<local-command-stdout>", "<local-command-stderr>")
+COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+
+
+def _slash_command(text: str) -> str:
+    """`/name args` for a slash-command record, or "" if the record is not one."""
+    if not text.startswith("<command-") or not (m := COMMAND_NAME.search(text)):
+        return ""
+    args = COMMAND_ARGS.search(text)
+    return f"{m.group(1).strip()} {args.group(1).strip() if args else ''}".strip()
+
+
 def _drop_compacted(s: Session, boundary: dict, where: dict[str, int]) -> None:
     """Claude Code compacted its context here. The summary record that follows replaces the
     assistant turns before this point, except the recent messages it kept (`preservedMessages`;
@@ -137,6 +154,7 @@ class ClaudeCodeSource(Source):
         s = Session(id=path.stem, source=self.name, path=str(path))
         pending_tools: dict[str, ToolCall] = {}
         where: dict[str, int] = {}  # record uuid -> index of the message it went into
+        command_msg: Message | None = None  # the last record, if it was a slash command
         with path.open(errors="replace") as fh:
             for line in fh:
                 line = line.strip()
@@ -177,6 +195,22 @@ class ClaudeCodeSource(Source):
                     if txt:
                         s.summaries.append(txt)
                     continue
+                command = ""
+                if rtype == "user":
+                    head = _text_of(msg.get("content")).lstrip()
+                    if head.startswith(LOCAL_OUTPUT_PREFIXES):
+                        # The command before it ran inside the harness (/model, /clear): not a request
+                        if command_msg is not None and s.messages and s.messages[-1] is command_msg:
+                            s.messages.pop()
+                            where = {k: v for k, v in where.items() if v < len(s.messages)}
+                        command_msg = None
+                        continue
+                    if head.startswith(HARNESS_PREFIXES):
+                        continue
+                    # A skill or custom command gets no local output and stays, as `/name args`
+                    if command := _slash_command(head):
+                        msg = {"role": "user", "content": command}
+                command_msg = None
                 if not s.cwd and rec.get("cwd"):
                     s.cwd = str(rec["cwd"])
                 if not s.branch and rec.get("gitBranch"):
@@ -186,6 +220,8 @@ class ClaudeCodeSource(Source):
                     s.started = s.started or ts
                     s.ended = ts
                 self._ingest(s, msg, rtype, ts, str(rec.get("uuid", "")), pending_tools)
+                if command and s.messages:
+                    command_msg = s.messages[-1]
                 if s.messages and rec.get("uuid"):
                     where[str(rec["uuid"])] = len(s.messages) - 1
         return s

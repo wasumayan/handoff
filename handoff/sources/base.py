@@ -63,7 +63,9 @@ class Source:
             if not paths:
                 raise FileNotFoundError(f"no {self.display} session matching {session_id!r}")
         out = []
-        for p in paths[:limit]:
+        for p in paths:  # newest first, past sessions with nothing in them (only `!` commands)
+            if len(out) >= limit:
+                break
             try:
                 s = self.read_session(p)
             except (OSError, ValueError):
