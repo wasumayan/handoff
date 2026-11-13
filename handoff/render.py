@@ -147,7 +147,7 @@ def render_layers(bundle: Bundle, composed: Composed | None, profile: Profile,
     header = (
         f"# Handoff: {bundle.source} → {profile.display}\n\n"
         f"_Generated {bundle.generated_at} by `handoff` ({mode}). "
-        f"Project: `{bundle.cwd}`. Full layers in `.handoff/`._\n"
+        f"Project: `{bundle.cwd}`. Full layers in `{layers_dir}/`._\n"
     )
     if bundle.notes:
         header += "\n" + "\n".join(f"> note: {n}" for n in bundle.notes) + "\n"

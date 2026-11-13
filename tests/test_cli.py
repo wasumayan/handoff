@@ -20,6 +20,7 @@ def test_create_no_llm_install_and_delta(project, claude_home, capsys):
     assert "8 GPUs" in (out / "project.md").read_text()
     assert "First handoff" in (out / "delta.md").read_text()
     assert "uv run pytest passes" in (out / "next.md").read_text()  # last human ask, not meta
+    assert "using Claude Code session 11111111" in capsys.readouterr().err
     agents = (project / "AGENTS.md").read_text()
     assert agents.startswith("# Agents\nPre-existing content that must survive.")
     assert "<!-- handoff:begin -->" in agents
@@ -57,7 +58,7 @@ def test_out_outside_project_writes_nothing_into_project(project, claude_home, t
     before = snapshot()
     out = tmp_path / "elsewhere"
     assert main(["create", "--to", "codex", "--path", str(project), "--no-llm", "--out", str(out)]) == 0
-    assert (out / "HANDOFF.md").is_file()
+    assert f"Full layers in `{out.resolve()}/`" in (out / "HANDOFF.md").read_text()
     assert not (project / ".handoff").exists()
     assert snapshot() == before  # includes .git/index
 
@@ -92,7 +93,11 @@ def test_codex_to_claude(project, codex_home):
 
 def test_sources_and_profiles(project, claude_home, capsys):
     assert main(["sources", "--path", str(project), "-v"]) == 0
-    assert "* claude_code" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "* claude_code" in printed
+    # each session: last activity, the id --session takes, size, and its first request, redacted
+    assert "2026-10-27 10:01  11111111" in printed and "Add a --verbose flag" in printed
+    assert "sk-ant" not in printed
     assert main(["profiles", "--json"]) == 0
     assert '"instruction_file": "AGENTS.md"' in capsys.readouterr().out
     Path(project)  # silence unused

@@ -11,15 +11,20 @@ from . import __version__, card, state
 from .backend import Backend, BackendError
 from .compact import compact
 from .compose import MODEL_INPUT_CHARS, compose, messages_for
-from .model import Bundle, Doc
+from .model import Bundle, Doc, Session
 from .recipients import RECIPIENTS, get_recipient
-from .redact import home_to_tilde, redact_bundle
+from .redact import home_to_tilde, redact, redact_bundle
 from .sources import SOURCES, detect_sources, get_source
 from .sources import git as gitsrc
 
 
 def _log(msg: str) -> None:
     print(msg, file=sys.stderr)
+
+
+def _when(s: Session) -> str:
+    """Last activity, as `YYYY-MM-DD HH:MM`."""
+    return s.ended[:16].replace("T", " ") or "no timestamp"
 
 
 def build_bundle(cwd: str, source_name: str | None, recipient_name: str, *, sessions: int,
@@ -50,6 +55,10 @@ def build_bundle(cwd: str, source_name: str | None, recipient_name: str, *, sess
         raise SystemExit(str(e)) from e
     if not b.sessions:
         b.notes.append(f"no {src.display} sessions found for this directory; handoff has instruction layers only")
+    for s in b.sessions:
+        _log(f"using {src.display} session {s.id[:8]} ({_when(s)}, {len(s.messages)} messages)")
+    if b.sessions and not session_id:
+        _log("  (`handoff sources -v` lists the others; `--session <id>` picks one)")
     # delta
     base = state.baseline(cwd, recipient_name)
     d = gitsrc.delta(cwd, base.get("last_sha", ""), base.get("at", ""))
@@ -176,8 +185,17 @@ def cmd_sources(a: argparse.Namespace) -> int:
         flag = "*" if (paths or docs) else " "
         print(f"{flag} {name:12s} sessions={len(paths):<3d} project_docs={len(docs):<2d} identity_docs={len(ident)}")
         if a.verbose:
+            if paths:
+                print(f"      sessions in {home_to_tilde(str(paths[0].parent))}, newest first:")
             for p in paths[:5]:
-                print(f"      {p}")
+                try:
+                    sess = s.read_session(p)
+                except (OSError, ValueError):
+                    continue
+                first = next((m.text for m in sess.messages if m.role == "user"), "")
+                first = " ".join(redact(first)[0].split())
+                first = first if len(first) <= 70 else first[:69] + "…"
+                print(f"      {_when(sess)}  {p.stem[:8]}  {len(sess.messages):>4d} msgs  {first}")
             for d in docs + ident:
                 print(f"      {d.path} ({d.chars} chars)")
     return 0
