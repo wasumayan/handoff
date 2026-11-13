@@ -10,11 +10,10 @@ writes that context into the file the next agent loads at startup (`AGENTS.md` f
 
 It works offline with no model and no API key. Python 3.11+, no dependencies.
 
-**What's known so far.** `handoff` moves the context: it parses formats you can't read by hand,
-redacts secrets, and puts the result where the next agent will read it. It has not yet been shown
-to make the next agent finish faster, cheaper or more often. The one small test so far found no
-difference (see [Does it help?](#does-it-help)). Treat it as a way to avoid re-explaining
-yourself, not as a performance boost.
+**We'd love your help.** `handoff` is our contribution to a problem everyone who switches between
+coding agents runs into. Try it on your next switch and tell us whether the new agent picked up
+where the old one left off. We're excited to hear how it goes: see
+[Try it and tell us](#try-it-and-tell-us).
 
 ## Quick start: Claude Code → Codex
 
@@ -151,24 +150,29 @@ sensitive, check the output, or the `--dry-run` text, before sharing it.
 - **Recipient profiles.** `handoff/recipients/profiles/*.toml` hold each recipient's instruction
   file, budget and style, as data rather than code.
 
-## Does it help?
+## Try it and tell us
 
-Unknown so far. Here is all the evidence there is.
+We built `handoff` because switching agents mid-task kept costing us work, and we want to know how
+much it helps you. Our first experiments are in [`eval/swe/RESULTS.md`](eval/swe/RESULTS.md), and a
+larger eval is ready to run in [`eval/README.md`](eval/README.md). But the real test is your own
+sessions, and that's where we need you.
 
-- **One small test, no effect.** Codex worked on 3 SWE-bench tasks and was cut off before its
-  first edit. A fresh Codex then took over, with and without a handoff written by a local model.
-  Both versions solved the same 2 of 3 tasks. The handoff added about 1k tokens of context, and
-  total token use showed no consistent direction. That's one run per task, so it's a sanity check,
-  not a result. Details are in [`eval/swe/RESULTS.md`](eval/swe/RESULTS.md).
-- **Why it may have shown nothing.** These tasks take 6-16 tool calls to solve from scratch, so
-  there was little earlier work for a handoff to save. A handoff should matter more after long
-  sessions with decisions and corrections the code doesn't show, which this test didn't cover.
-- **Not run yet:** a larger eval with five scenarios. Each hides facts, a user correction and a
-  dead end that exist only in the earlier session. See [`eval/README.md`](eval/README.md).
+If you try it, we'd love to hear:
 
-Until those results exist, the claim is only that the context arrives, not that it helps.
+- whether the new agent picked up where the old one stopped, and what it missed
+- anything in the handoff that was wrong, missing, or shouldn't have been there
+- which agents you switch between, and what you'd like supported next
+
+Open an issue at [github.com/wasumayan/handoff/issues](https://github.com/wasumayan/handoff/issues),
+or email us at [yuvalkansal@gmail.com](mailto:yuvalkansal@gmail.com) and
+[mayanwasu@princeton.edu](mailto:mayanwasu@princeton.edu). Pull requests are welcome, especially
+for new agents and session formats. If `handoff` is useful to you, a star on GitHub helps other
+people find it.
 
 ## Limitations
+
+Help with any of these is welcome.
+
 
 - **Long sessions without a model lose most of the agent's replies.** To fit the budget,
   compaction keeps your messages longest and drops the agent's replies first. On one 8 MB session
