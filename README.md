@@ -1,6 +1,6 @@
 # handoff
 
-Hand a coding session from one AI agent to another without losing the thread.
+Carry a coding session's context from one AI agent to another.
 
 You hit your Claude Code usage limit halfway through a task. Codex, Cursor or a local model is
 available, but it starts from zero: it doesn't know what you asked for, what was tried and failed,
@@ -9,6 +9,12 @@ writes that context into the file the next agent loads at startup (`AGENTS.md` f
 `CLAUDE.md` for Claude Code, a rules file for Cursor). Then you start the new agent and keep going.
 
 It works offline with no model and no API key. Python 3.11+, no dependencies.
+
+**What's known so far.** `handoff` moves the context: it parses formats you can't read by hand,
+redacts secrets, and puts the result where the next agent will read it. It has not yet been shown
+to make the next agent finish faster, cheaper or more often. The one small test so far found no
+difference (see [Does it help?](#does-it-help)). Treat it as a way to avoid re-explaining
+yourself, not as a performance boost.
 
 ## Quick start: Claude Code → Codex
 
@@ -33,12 +39,21 @@ Step 2 lists the recent sessions for this directory, newest first, with each one
 
 ## What happens after the handoff
 
-**Codex** reads `AGENTS.md` from the repo root at the start of every session, so running `codex`
-in the project is enough to load it. It still waits for a prompt, so start with one like the
-example above. By default Codex reads only the first 32 KiB of `AGENTS.md`, which is why the Codex
-handoff is capped at 24,000 characters.
+**Codex** loads every `AGENTS.md` from the git root down to the directory you start it in, at the
+start of each session. So running `codex` anywhere in the project is enough to load it. It still
+waits for a prompt, so start with one like the example above. Three things can get in the way,
+from Codex's source as of November 2026:
 
-**Claude Code** (`--to claude`) reads `CLAUDE.md` the same way:
+- **Size.** Codex reads at most 32 KiB across all of those `AGENTS.md` files combined
+  (`project_doc_max_bytes`) and cuts the rest, with a "Loaded only N of M bytes" warning. The
+  handoff is capped at 24,000 characters to leave room. The block goes at the end of the file, so
+  if your `AGENTS.md` is already long, the newest part of the transcript is what gets cut. Use
+  `--brief`, or raise `project_doc_max_bytes` in `~/.codex/config.toml`.
+- **Trust.** In a project you've marked untrusted, Codex loads no `AGENTS.md` at all.
+- **Overrides.** If an `AGENTS.override.md` sits next to `AGENTS.md`, Codex reads it instead.
+
+**Claude Code** (`--to claude`) loads `CLAUDE.md` from the directory you start it in and its
+parents:
 
 ```bash
 handoff create --from codex --to claude --install
@@ -65,7 +80,8 @@ order:
 3. **Project context:** the old agent's instruction files and memory, plus a git snapshot.
 4. **Your user-level preferences** (`~/.claude/CLAUDE.md`).
 5. **The transcript, compacted:** your messages in full, each tool call on one line, and errors
-   kept. Older material is trimmed first when it doesn't fit.
+   kept. When it doesn't fit, older material goes first, and the agent's replies go before yours
+   (see [Limitations](#limitations)).
 
 If the new agent's context is tight, `--brief` installs only items 1 and 2 plus a pointer to the
 full files.
@@ -76,8 +92,9 @@ full files.
   everything between the two markers, or delete the file if `handoff` created it. Add `.handoff/`
   to `.gitignore`.
 - **Switching back** works the same way in reverse, for example
-  `handoff create --from codex --to claude --install` once your Claude Code usage resets. The
-  "what changed" section then lists what Codex did since the last handoff to Claude.
+  `handoff create --from codex --to claude --install` once your Claude Code usage resets. Claude
+  then gets Codex's session, plus the commits and file changes made since your last handoff to
+  Claude.
 
 ## Options
 
@@ -136,11 +153,37 @@ sensitive, check the output, or the `--dry-run` text, before sharing it.
 
 ## Does it help?
 
-Not settled yet. A first SWE-bench sanity check, with 3 tasks and one run each, showed no
-difference in tasks solved; the handoff cost about 1k tokens of context. Details are in
-[`eval/swe/RESULTS.md`](eval/swe/RESULTS.md). A larger eval, with five scenarios built so the
-next agent can't succeed without the earlier session, is ready to run but has no results yet:
-see [`eval/README.md`](eval/README.md).
+Unknown so far. Here is all the evidence there is.
+
+- **One small test, no effect.** Codex worked on 3 SWE-bench tasks and was cut off before its
+  first edit. A fresh Codex then took over, with and without a handoff written by a local model.
+  Both versions solved the same 2 of 3 tasks. The handoff added about 1k tokens of context, and
+  total token use showed no consistent direction. That's one run per task, so it's a sanity check,
+  not a result. Details are in [`eval/swe/RESULTS.md`](eval/swe/RESULTS.md).
+- **Why it may have shown nothing.** These tasks take 6-16 tool calls to solve from scratch, so
+  there was little earlier work for a handoff to save. A handoff should matter more after long
+  sessions with decisions and corrections the code doesn't show, which this test didn't cover.
+- **Not run yet:** a larger eval with five scenarios. Each hides facts, a user correction and a
+  dead end that exist only in the earlier session. See [`eval/README.md`](eval/README.md).
+
+Until those results exist, the claim is only that the context arrives, not that it helps.
+
+## Limitations
+
+- **Long sessions without a model lose most of the agent's replies.** To fit the budget,
+  compaction keeps your messages longest and drops the agent's replies first. On one 8 MB session
+  with the 24,000-character Codex budget, the transcript kept all 18 of the user's messages but
+  only the agent's final reply. Earlier reports, such as which tasks were fixed, were gone. A model
+  reads up to 60,000 characters and summarizes them, which helps. So does a larger `--budget`,
+  though Codex loads at most 32 KiB of `AGENTS.md`.
+- **The model's summary isn't checked.** Without a model, everything is copied or trimmed from the
+  log. With one, the summary is told not to contradict the facts copied from the log, but it can
+  still be wrong.
+- **The session formats are undocumented.** A new Claude Code or Codex release can change them and
+  break parsing. The versions checked are listed below.
+- **Cursor chat history can't be read**, so Cursor is a target only. As a source, `handoff` reads
+  just its rules files.
+- **Redaction is pattern matching**, as described under [Privacy](#privacy).
 
 ## Formats this depends on
 
