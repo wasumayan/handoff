@@ -79,8 +79,8 @@ order:
 3. **Project context:** the old agent's instruction files and memory, plus a git snapshot.
 4. **Your user-level preferences** (`~/.claude/CLAUDE.md`).
 5. **The transcript, compacted:** your messages in full, each tool call on one line, and errors
-   kept. When it doesn't fit, older material goes first, and the agent's replies go before yours
-   (see [Limitations](#limitations)).
+   kept. When it doesn't fit, older material goes first, and the agent's older replies go before
+   yours (see [Limitations](#limitations)).
 
 If the new agent's context is tight, `--brief` installs only items 1 and 2 plus a pointer to the
 full files.
@@ -142,9 +142,12 @@ sensitive, check the output, or the `--dry-run` text, before sharing it.
   reminders. What remains is your messages, the agent's replies and one line per tool call.
   Claude Code's own compaction summaries replace the history they cover.
 - **Compaction.** It cuts to fit a per-recipient character budget, in a fixed order: older
-  sessions first, then repeated tool calls, tool detail and long assistant prose, then whole
-  assistant messages, and your messages last. Your first message and the last two messages are
-  always kept.
+  sessions first, then repeated tool calls, tool detail and long assistant prose, then the middle
+  of long pastes, then whole assistant messages, and your messages last. Your first message and
+  the last two messages are always kept, and so are the agent's three replies before those, which
+  say where the work stands. A shortened reply keeps its end, where the agent reports what it did.
+- **Errors.** A shell command that exits 1 or 2 with no failure in its output (a trailing `grep`,
+  `diff` or `ls x 2>/dev/null` answering "no") isn't treated as an error. Test runs always are.
 - **Delta.** `.handoff/state.json` records the commit and last message at each handoff, per
   recipient, so the next handoff can say what changed.
 - **Recipient profiles.** `handoff/recipients/profiles/*.toml` hold each recipient's instruction
@@ -174,10 +177,9 @@ people find it.
 Help with any of these is welcome.
 
 
-- **Long sessions without a model lose most of the agent's replies.** To fit the budget,
-  compaction keeps your messages longest and drops the agent's replies first. On one 8 MB session
-  with the 24,000-character Codex budget, the transcript kept all 18 of the user's messages but
-  only the agent's final reply. Earlier reports, such as which tasks were fixed, were gone. A model
+- **Long sessions without a model lose the agent's older replies.** To fit the budget,
+  compaction keeps your messages and the agent's last four replies, and drops earlier replies. On
+  one 8 MB session with the 24,000-character Codex budget, 14 of 18 replies were dropped. A model
   reads up to 60,000 characters and summarizes them, which helps. So does a larger `--budget`,
   though Codex loads at most 32 KiB of `AGENTS.md`.
 - **The model's summary isn't checked.** Without a model, everything is copied or trimmed from the

@@ -93,6 +93,53 @@ def test_repeated_calls_collapse_to_the_last_run():
     assert len(calls) <= 1 and all("run 5x" in t.input_summary for t in calls)
 
 
+def _long_session() -> Session:
+    """Shape of a real multi-day Claude Code session: each assistant message is a whole agentic turn,
+    narration first and the report at the end; one human turn is a pasted script."""
+    msgs = [Message("user", "build the medical task split", uuid="u0")]
+    for i in range(1, 9):
+        ask = "x = 1\n" * 600 if i == 3 else f"short correction {i}"  # i == 3: a 3,600-char paste
+        msgs.append(Message("user", ask, uuid=f"u{i}"))
+        msgs.append(Message("assistant", f"I'll look at step {i} first. " + "narration " * 150
+                            + f"REPORT {i}: 5 tasks fixed, 53 tests pass.", uuid=f"a{i}"))
+    msgs += [Message("user", "push it", uuid="u9"), Message("assistant", "Pushed.", uuid="a9")]
+    return Session(id="s", source="t", messages=msgs)
+
+
+def test_recent_replies_survive_with_their_reports():
+    s = _long_session()
+    out = compact_session(s, 6000)
+    assert out.chars <= 6000
+    kept = {m.uuid: m.text for m in out.messages}
+    for i in (6, 7, 8):  # the three replies before the protected last two messages
+        assert f"a{i}" in kept and kept[f"a{i}"].endswith(f"REPORT {i}: 5 tasks fixed, 53 tests pass.")
+    assert "a1" not in kept and "dropped" in out.summaries[0]  # older replies go first
+    # the final fit after rendering keeps them too
+    tight = compact_session(out, out.chars - 1500, keep_users=True)
+    assert all(f"a{i}" in {m.uuid for m in tight.messages} for i in (6, 7, 8))
+
+
+def test_pastes_lose_their_middle_before_human_turns_are_dropped():
+    s = _long_session()
+    out = compact_session(s, 6000)
+    users = {m.uuid: m.text for m in out.messages if m.role == "user"}
+    assert all(f"u{i}" in users for i in range(10))  # every human turn survives
+    assert "chars cut" in users["u3"] and users["u3"].startswith("x = 1")
+
+
+def test_expected_exits_are_trimmed_like_successes():
+    def bash(cmd, out, code):
+        return ToolCall("Bash", cmd, f"Exit code {code}\n{out}", is_error=True, exit_code=code)
+
+    s = Session(id="s", source="t", messages=[
+        Message("user", "go"),
+        Message("assistant", "a" * 2000, tool_calls=[
+            bash("diff a b", "8c8 " * 100, 1), bash("python x.py", "Traceback: KeyError", 1)]),
+        Message("user", "?"), Message("assistant", "done")])
+    out = compact_session(s, 1500)
+    assert [t.input_summary for t in out.messages[1].tool_calls] == ["python x.py"]
+
+
 def test_budget_holds_even_for_huge_protected_messages():
     s = Session(id="s", source="t", summaries=["S" * 5000], messages=[
         Message("user", "A" * 9000), Message("assistant", "B" * 200), Message("user", "C" * 7000)])

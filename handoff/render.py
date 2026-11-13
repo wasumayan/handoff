@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .card import failed
 from .model import Bundle, Composed, Message, Session
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def _message_md(m: Message) -> str:
     for t in m.tool_calls:
         line = f"- `{t.name}` {t.input_summary}".rstrip()
         if t.result_summary:
-            tag = "ERROR" if t.is_error else "result"
+            tag = "ERROR" if failed(t) else "result"
             one = t.result_summary.replace("\n", " ⏎ ")
             line += f"\n  - {tag}: {one}"
         parts.append(line)

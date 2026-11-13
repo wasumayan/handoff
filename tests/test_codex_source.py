@@ -75,6 +75,7 @@ def test_v0144_exec_command_and_apply_patch():
     s = CodexSource().read_session(SESSIONS / "v0144.jsonl")
     cat, grep, patch = s.messages[1].tool_calls
     assert cat.is_error and cat.result_summary == "cat: missing.md: No such file or directory"
+    assert cat.exit_code == 1 and grep.exit_code == 0
     assert not grep.is_error  # "error" in the output of a successful command
     assert patch.name == "apply_patch" and patch.input_summary == "apply_patch docs/CHANGELOG.md"
     assert not patch.is_error and patch.result_summary.startswith("Success.")

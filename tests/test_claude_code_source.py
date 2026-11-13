@@ -130,6 +130,23 @@ def test_harness_records_are_not_user_turns(project, claude_home):
     ]
 
 
+def test_exit_code_is_read_from_a_failed_shell_call(project, claude_home):
+    records = [
+        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "check the jobs"}},
+        {"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "squeue -u $USER; ls results/ 2>/dev/null"}}]}},
+        {"type": "user", "uuid": "r1", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+             "content": "Exit code 2\nJOBID NAME ST"}]}},
+    ]
+    d = claude_home / "projects" / project_slug(str(project))
+    (d / "exit.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    s = ClaudeCodeSource(claude_home).sessions(str(project), session_id="exit")[0]
+    tc = s.messages[1].tool_calls[0]
+    assert tc.is_error and tc.exit_code == 2
+
+
 def test_session_of_only_harness_records_is_skipped(project, claude_home):
     d = claude_home / "projects" / project_slug(str(project))
     noise = d / "znoise.jsonl"

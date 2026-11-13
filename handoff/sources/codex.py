@@ -101,8 +101,8 @@ def _wait_cell(args: object) -> str:
     return str(args.get("cell_id", "")) if isinstance(args, dict) else ""
 
 
-def _tool_output(raw: object) -> tuple[str, bool, str]:
-    """Return (body, is_error, running_cell_id) for a tool output in any Codex version's shape:
+def _tool_output(raw: object) -> tuple[str, bool, str, int | None]:
+    """Return (body, is_error, running_cell_id, exit_code) for a tool output in any Codex version's shape:
     plain text with a harness header, JSON-encoded input_text blocks, or {"output", "metadata"}."""
     exit_code = None
     if isinstance(raw, str) and raw[:1] in "[{":
@@ -129,7 +129,7 @@ def _tool_output(raw: object) -> tuple[str, bool, str]:
         is_err = text.startswith(_SCRIPT_ERRORS) or bool(exit_code)
     else:  # headerless legacy output: fall back to keywords
         is_err = any(k in text[:200].lower() for k in ("error", "traceback"))
-    return body, is_err, running.group(1) if running else ""
+    return body, is_err, running.group(1) if running else "", exit_code
 
 
 def _content_text(content: object) -> str:
@@ -308,7 +308,7 @@ class CodexSource(Source):
                     tc = pending.pop(cid, None) if isinstance(cid, str) else None
                     if tc is None:
                         continue
-                    out, is_err, running = _tool_output(payload.get("output"))
+                    out, is_err, running, tc.exit_code = _tool_output(payload.get("output"))
                     if running:
                         cells[running] = tc
                         out = out or "(still running)"

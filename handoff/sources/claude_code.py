@@ -32,6 +32,7 @@ from .base import Source, home, read_dir_docs, read_doc
 TOOL_INPUT_CHARS = 240
 TOOL_RESULT_CHARS = 320
 TOOL_RESULT_ERROR_CHARS = 1200
+EXIT_CODE = re.compile(r"Exit code (\d+)")  # how a failed Bash result begins
 
 
 def project_slug(cwd: str) -> str:
@@ -265,6 +266,8 @@ class ClaudeCodeSource(Source):
                     if tc is not None:
                         tc.result_summary = _clip(text, limit)
                         tc.is_error = is_err
+                        if is_err and (m := EXIT_CODE.match(text)):
+                            tc.exit_code = int(m.group(1))
                     # A tool_result-only user record is not a human turn; skip it.
                 # thinking blocks are dropped on purpose
         text = "\n".join(t for t in texts if t and t.strip()).strip()

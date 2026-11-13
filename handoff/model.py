@@ -33,6 +33,7 @@ class ToolCall:
     input_summary: str
     result_summary: str = ""
     is_error: bool = False
+    exit_code: int | None = None  # shell calls, when the source records it
 
 
 @dataclass

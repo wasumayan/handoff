@@ -23,6 +23,30 @@ def test_card_copies_facts_from_the_log():
     assert build(None) == "" and build(Session(id="e", source="t")) == ""
 
 
+def test_expected_exits_are_not_open_errors():
+    # Real shapes: Claude Code reports the last command's status, so a trailing diff, grep or
+    # `ls x 2>/dev/null` marks a call whose work succeeded as an error.
+    def bash(cmd, out, code):
+        return ToolCall("Bash", cmd, f"Exit code {code}\n{out}", is_error=True, exit_code=code)
+
+    s = Session(id="s", source="t", messages=[
+        Message("user", "rerun the fixed tasks"),
+        Message("assistant", "", tool_calls=[
+            bash("diff old.sh new.sh", "8c8\n< OUT=a\n---\n> OUT=b", 1),
+            bash("echo \"done $(grep -c FAILED log)\"", "qwen: done 60/60, FAILED 0", 1),
+            bash("squeue -u $USER; ls results/ 2>/dev/null", "JOBID NAME ST", 2),
+            bash("python check.py", "Traceback (most recent call last):\nKeyError: 'x'", 1),
+            bash("git push", "fatal: Could not read from remote repository.", 128),
+            bash("uv run pytest -q", "....F", 1),  # a test run's exit code is its result
+        ]),
+    ])
+    card = build(s)
+    errors = card.split("never followed")[1]
+    assert "python check.py" in errors and "git push" in errors
+    assert "diff" not in errors and "grep" not in errors and "squeue" not in errors
+    assert "**Last test run:** `uv run pytest -q`: FAILED" in card
+
+
 def test_card_says_when_nothing_was_edited():
     s = Session(id="s", source="t", messages=[
         Message("user", "fix it"), Message("assistant", "", tool_calls=[ToolCall("Bash", "rg bug")])])

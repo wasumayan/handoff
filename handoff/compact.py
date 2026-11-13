@@ -1,12 +1,15 @@
 """Deterministic, budgeted compaction. No model involved.
 
 Rules (in priority order):
-  1. Never drop the first human turn or the last two messages of the newest session.
+  1. Never drop the first human turn or the last two messages of the newest session. The agent's
+     three replies before those say where the work stands: they go after every older reply, and
+     are kept in the final fit after rendering.
   2. Drop whole older sessions before trimming the newest one.
   3. Within a session: collapse repeated identical tool calls, clip tool calls, then drop
      successful tool calls (failures stay: they say what did not work), then shorten assistant
-     prose (the agent's own reports summarize its tool output), then drop assistant messages, and
-     only then human turns. Short human corrections ("use the staging server",
+     prose to its end (a Claude Code message is a whole agentic turn: narration first, the report
+     last), then cut the middle of long human turns (pastes), then drop older assistant messages,
+     and only then human turns. Short human corrections ("use the staging server",
      "don't stop after step 1") carry the preferences the next agent most needs; tool lines
      were 90% of a real Codex session.
   4. Instruction docs (identity/project) are trimmed last and only from the end of each doc,
@@ -19,9 +22,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .card import failed
 from .model import Bundle, Message, Session
 
 ASSISTANT_TRIM_CHARS = 600
+RECENT_REPLIES = 3  # assistant replies before the last two messages that are never dropped
+RECENT_REPLY_CHARS = 1200  # what each of those keeps when shortened
+PASTE_KEEP_CHARS = 1500  # a longer human turn is a paste; it loses its middle before turns are dropped
 ERROR_KEEP_CHARS = 200
 DOC_MIN_CHARS = 1500
 CLIP_MIN_CHARS = 400  # what a protected message or summary keeps at least when its middle is cut
@@ -49,28 +56,29 @@ def _clip_middle(text: str, keep: int) -> str:
     return f"{text[:half].rstrip()}\n[handoff: {len(text) - 2 * half} chars cut]\n{text[-half:].lstrip()}"
 
 
-def _trim_message(m: Message, level: int) -> Message:
-    """level 1: clip tool inputs, keep only error results. level 2: drop successful tool calls,
-    leaving a count. level 3: shorten assistant prose."""
+def _trim_message(m: Message, level: int, keep: int = ASSISTANT_TRIM_CHARS) -> Message:
+    """level 1: clip tool inputs, keep only failure results. level 2: drop successful tool calls,
+    leaving a count. level 3: shorten assistant prose to its last `keep` chars."""
     text = m.text
     tools = m.tool_calls
     if level >= 1:
         tools = [replace(t, input_summary=t.input_summary[:80],
-                         result_summary=t.result_summary[:ERROR_KEEP_CHARS] if t.is_error else "")
+                         result_summary=t.result_summary[:ERROR_KEEP_CHARS] if failed(t) else "")
                  for t in tools]
-    if level >= 2 and any(not t.is_error for t in tools):
-        gone = sum(not t.is_error for t in tools)
-        tools = [t for t in tools if t.is_error]
+    if level >= 2 and any(not failed(t) for t in tools):
+        gone = sum(not failed(t) for t in tools)
+        tools = [t for t in tools if failed(t)]
         note = f"[handoff: {gone} tool call(s) omitted]"
     else:
         note = ""
-    if m.role == "assistant" and level >= 3 and len(text) > ASSISTANT_TRIM_CHARS:
-        text = text[: ASSISTANT_TRIM_CHARS - 1].rstrip() + "…"
+    if m.role == "assistant" and level >= 3 and len(text) > keep:
+        text = "…" + text[-(keep - 1):].lstrip()
     return replace(m, text=(text + "\n" + note).strip() if note else text, tool_calls=tools)
 
 
 def compact_session(s: Session, budget: int, keep_users: bool = False) -> Session:
-    """keep_users=True never drops a human turn (long ones may still lose their middle)."""
+    """keep_users=True never drops a human turn or one of the recent replies (long ones may still
+    lose their middle): the final fit after rendering, which must not undo what this kept."""
     if s.chars <= budget:
         return s
     msgs: list[Message | None] = [_collapse_repeats(m) for m in s.messages]
@@ -81,24 +89,36 @@ def compact_session(s: Session, budget: int, keep_users: bool = False) -> Sessio
     if first_user is not None:
         protected.add(first_user)
     protected.update(range(max(0, n - 2), n))
+    unprotected = [i for i in range(n) if i not in protected]
+    replies = [i for i in unprotected if s.messages[i].role == "assistant"]
+    recent = replies[-RECENT_REPLIES:]  # dropped after every older reply, before human turns
+    older = [i for i in unprotected if i not in recent]
 
     def total() -> int:
         return sum(m.chars for m in msgs if m is not None) + sum(len(x) for x in summaries)
 
-    def trim(level: int, indices) -> None:
+    def trim(level: int, indices, keep: int = ASSISTANT_TRIM_CHARS) -> None:
         for i in indices:
             if total() <= budget:
                 return
             if msgs[i] is not None:
-                msgs[i] = _trim_message(msgs[i], level)
+                msgs[i] = _trim_message(msgs[i], level, keep)
 
-    def drop(users: bool) -> int:
+    def clip_pastes() -> None:
+        for i in unprotected:
+            m = msgs[i]
+            if total() <= budget:
+                return
+            if m is not None and m.role == "user" and len(m.text) > PASTE_KEEP_CHARS:
+                keep = max(PASTE_KEEP_CHARS, len(m.text) - (total() - budget))
+                msgs[i] = replace(m, text=_clip_middle(m.text, keep))
+
+    def drop(indices) -> int:
         k = 0
-        for i in range(n):
+        for i in indices:
             if total() <= budget:
                 break
-            m = msgs[i]
-            if i not in protected and m is not None and (m.role == "user") == users:
+            if msgs[i] is not None:
                 msgs[i] = None
                 k += 1
         return k
@@ -118,14 +138,16 @@ def compact_session(s: Session, budget: int, keep_users: bool = False) -> Sessio
                 summaries[i] = _clip_middle(summaries[i], keep)
 
     # Each step costs the recipient less than the next one.
-    unprotected = [i for i in range(n) if i not in protected]
     trim(1, range(n))  # clip tool lines everywhere
     trim(2, unprotected)  # drop successful tool calls
-    trim(3, unprotected)  # shorten assistant prose
-    dropped = drop(users=False)
+    trim(3, older)  # shorten older assistant prose to its end
+    trim(3, recent, RECENT_REPLY_CHARS)
+    clip_pastes()  # long human turns lose their middle
+    dropped = drop([i for i in older if s.messages[i].role == "assistant"])
     trim(2, sorted(protected))
     if not keep_users:
-        dropped += drop(users=True)
+        dropped += drop(recent)
+        dropped += drop([i for i in older if s.messages[i].role == "user"])
     if dropped:
         summaries.insert(0, f"[handoff: {dropped} earlier message(s) dropped to fit budget]")
     clip_rest()

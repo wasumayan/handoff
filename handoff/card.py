@@ -16,6 +16,25 @@ SHELL_TOOLS = {"Bash", "shell", "exec_command", "exec"}  # Claude Code; Codex
 TEST_RE = re.compile(r"\b(pytest|py\.test|unittest|tox|nox|(npm|yarn|pnpm)( run)? test|go test|"
                      r"cargo test|make (test|check)|jest|vitest|mvn test|gradle test|rspec)\b")
 MAX_SAID = 8  # most recent user messages after the first
+# A shell reports its last command's status, so a trailing grep, diff, test or `ls x 2>/dev/null`
+# answering "no" marks a whole call as an error though its work succeeded. Exit 1 or 2 with nothing
+# in the output that reads as a failure is taken as that answer. In real sessions these were a third
+# of all errored calls; real failures said so (Traceback, fatal:, No such file, not permitted).
+FAILURE_TEXT = re.compile(
+    r"Traceback|Exception|[Ee]rror|ERROR|\bFAIL\b|[Ff]ailed|[Ff]atal|No such file|not found|"
+    r"[Pp]ermission denied|not permitted|[Cc]annot |[Cc]ould not|[Uu]nable to|Killed|"
+    r"Segmentation fault|[Aa]bort|[Dd]enied|[Ii]nvalid|[Uu]nrecognized|[Ss]yntax|[Uu]sage:")
+LEADING_EXIT = re.compile(r"^Exit code \d+\s*")
+
+
+def failed(t: ToolCall) -> bool:
+    """Whether the call failed: an error, unless it is a shell's expected non-zero exit. A test
+    run's exit code is always its result."""
+    if not t.is_error:
+        return False
+    if t.exit_code not in (1, 2) or TEST_RE.search(t.input_summary):
+        return True
+    return bool(FAILURE_TEXT.search(LEADING_EXIT.sub("", t.result_summary)))
 
 
 def _clip(s: str, n: int) -> str:
@@ -62,7 +81,7 @@ def build(s: Session | None, with_user: bool = True) -> str:
         out.append(line)
     open_errors: dict[str, ToolCall] = {}
     for t in calls:  # an error stays open until the same call succeeds later
-        if t.is_error:
+        if failed(t):
             open_errors[t.input_summary] = t
         else:
             open_errors.pop(t.input_summary, None)
